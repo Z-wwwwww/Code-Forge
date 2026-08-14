@@ -43,7 +43,7 @@ MCP: claude mcp add --scope user code-forge
 ### ① 终端里（推荐,不弹网页）
 
 ```
-code-forge tui        # 问几个问题 → 开跑 → 就地直播
+code-forge tui        # 问几个问题 → 开跑 → 就地直播（判据命令有候选可挑，不用自己想）
 code-forge watch      # 只直播（回环是从聊天里 /code-forge 起的时候用这个）
 ```
 
@@ -161,7 +161,7 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 47 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
+node test-host.js    # 57 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
 node test.js         # 29 项：本地驱动模式（可选）
 ```
 
@@ -173,6 +173,8 @@ node test.js         # 29 项：本地驱动模式（可选）
 ```
 install.js                         一条命令接入 Claude Code（幂等 / --dry-run / --uninstall）
 tui.js                             终端界面：问答向导 + 就地直播（纯函数渲染，非 TTY 自动退化）
+gatesuggest.js                     判据命令候选：协调者看一眼项目 + 文件启发式兜底
+agentcli.js                        起 agent 命令行的唯一收口（不走 shell、模型名过白名单、可换 CLI）
 agentrun.js                        点 Run/tui 启动：拼提示词 + 起 headless claude -p + 解 stream-json
 skills/code-forge/SKILL.md   技能：协议 + 三条纪律（给 agent 读的那份）
 agents/forge-proposer|critic|reviewer.md  三个角色，各绑不同模型与工具集

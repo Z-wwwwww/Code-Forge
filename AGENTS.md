@@ -3,6 +3,26 @@
 Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自动加载)。
 其它宿主目前没有统一的技能格式,所以这里给两样东西:**怎么把 MCP 接上**、**照什么协议走**。
 
+## 0. 哪些通用，哪些只认 Claude Code
+
+先把这条说清楚,免得踩空:
+
+| 部件 | 通用吗 | 说明 |
+|---|---|---|
+| MCP 协议 `loop_begin / loop_say / loop_gate / loop_status / loop_end` | ✅ | 任何支持 stdio MCP 的宿主 |
+| 判据(`gate.js`)、预算、以及那条「没判过不许说达标」的拒绝(`hostrun.js`) | ✅ | 纯代码,与宿主无关 |
+| 监控台、事件流、`code-forge tui` / `code-forge watch` | ✅ | 只读事件流,不关心谁在执行 |
+| 纯 HTTP `/host/*` | ✅ | 不装 MCP 也能驱动 |
+| `skills/code-forge/SKILL.md` 的协议与三条纪律 | ✅ | 是文本,贴进任何 agent 的 rules/AGENTS.md 都成立 |
+| **判据命令「候选式确认」** | ✅ | 写在技能里 —— 由**宿主自己**看仓库、自己提 2~4 条候选 |
+| `agents/forge-*.md` 三个角色(各绑模型与工具集) | ❌ | Claude Code 的 subagent 格式 |
+| `/code-forge` 斜杠命令、`install.js`、插件清单 | ❌ | Claude Code 的目录约定 |
+| 页面 **Run** / `tui` **自动把执行者拉起来** | ⚠️ | 默认起 `claude`;`CODE_FORGE_AGENT_CLI` 能换成别的 agent 命令行,**但 `-p` / `--output-format stream-json` / `--allowedTools` 是 claude 专属参数** —— 换了以后这条路的参数要自己对 |
+| `/setup` 页上「让协调者建议判据」 | ⚠️ | 同上走本地 `claude -p`;**失败自动退回零调用的文件启发式**(pytest.ini、package.json 的 scripts、Cargo.toml…),那半是通用的 |
+
+一句话:**回环本身、判定、留痕、直播都是通用的;只有「自动把执行者拉起来」这一件事目前对
+Claude Code 开箱即用。** 其它宿主走「你自己驱动」那条路 —— 接上 MCP、照下面的协议走,效果一样。
+
 ## 1. 接上 MCP（一次)
 
 命令 `node <本目录>/server.js --mcp`,stdio 传输。零依赖、零 key。

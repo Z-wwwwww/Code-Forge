@@ -122,6 +122,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
       <label>工作目录<input id="cwd" class="mono" placeholder="留空 = 监控台进程所在目录" />
         <span class="note">agent 会在这个目录里干活</span></label>
     </div>
+    <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button type="button" class="ghost" id="suggest">让协调者看一眼项目，给几条候选</button>
+      <span class="msg" id="sugmsg"></span>
+    </div>
+    <div id="sugbox" class="hide" style="margin-top:9px;display:flex;flex-direction:column;gap:6px"></div>
     <div class="grid g4" style="margin-top:11px">
       <label>指标名<input id="mname" placeholder="覆盖率" /></label>
       <label>抓取正则<input id="mpattern" class="mono" placeholder="coverage[^0-9]*([0-9]+)" />
@@ -341,6 +346,56 @@ $("stop").addEventListener("click", async function(){
   setMsg("已请求停止", "ok");
   refresh();
 });
+// 让协调者看一眼项目，给几条判据候选。它只读、有超时；失败自动退回文件启发式。
+// 建议不等于验证 —— 第一轮 loop_gate 才真跑那条命令。
+$("suggest").addEventListener("click", async function(){
+  var btn = this, m = $("sugmsg"), box = $("sugbox");
+  btn.disabled = true; m.className = "msg"; m.textContent = "正在看项目…（只读，最多 60s）";
+  try {
+    var res = await fetch("/agent/suggest-gate", { method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({ task: str("task"), cwd: str("cwd") || null }) });
+    var d = await res.json();
+    box.innerHTML = "";
+    if (!d.candidates || !d.candidates.length) {
+      box.classList.add("hide");
+      m.className = "msg err";
+      m.textContent = (d.note || d.error || "没给出候选") + " —— 自己填一条";
+    } else {
+      box.classList.remove("hide");
+      d.candidates.forEach(function(c, i){
+        var row = document.createElement("label");
+        row.className = "radio";
+        row.innerHTML = '<input type="radio" name="sug" value="' + i + '" />' +
+          '<span><b>' + esc(c.command) + '</b><i>' + esc(c.why || "") +
+          (c.metric ? "　[带指标 " + esc(c.metric.name) + "]" : "") +
+          "　" + esc(c.from || "") + '</i></span>';
+        box.appendChild(row);
+      });
+      box.addEventListener("change", function(ev){
+        if (ev.target.name !== "sug") return;
+        var c = d.candidates[+ev.target.value];
+        $("cmd").value = c.command;
+        // 候选自带指标就顺手填上，省得再想正则
+        if (c.metric) {
+          $("mname").value = c.metric.name || "指标";
+          $("mpattern").value = c.metric.pattern || "";
+          if (c.metric.min != null) $("mmin").value = c.metric.min;
+          if (c.metric.max != null) $("mmax").value = c.metric.max;
+        }
+        Array.from(box.querySelectorAll(".radio")).forEach(function(r, i){
+          r.classList.toggle("on", i === +ev.target.value);
+        });
+        m.className = "msg ok"; m.textContent = "已填入（可以直接改）";
+      }, { once: false });
+      m.className = "msg";
+      m.textContent = (d.source || "") + (d.note ? "　注：" + d.note : "") + "　选一条，或自己改输入框";
+    }
+  } catch (err) {
+    m.className = "msg err"; m.textContent = "取候选失败：" + err.message;
+  }
+  btn.disabled = false;
+});
+
 $("genPrompt").addEventListener("click", async function(){
   var d = await (await fetch("/agent/prompt", { method:"POST", headers:{"content-type":"application/json"},
     body: JSON.stringify(config()) })).json();

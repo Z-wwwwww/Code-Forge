@@ -122,7 +122,11 @@ function create(append, getSelfUrl) {
       "mcp__code-forge__loop_begin", "mcp__code-forge__loop_say", "mcp__code-forge__loop_gate",
       "mcp__code-forge__loop_status", "mcp__code-forge__loop_end",
       "Read", "Grep", "Glob");
-    if (cfg.model) args.push("--model", cfg.model);
+    // 模型名过白名单:它是用户填的,而参数最终要进 argv
+    const cli = require("./agentcli.js");
+    const model = cli.safeModel(cfg.model);
+    if (cfg.model && !model) return { error: "模型名不合法：" + cfg.model };
+    if (model) args.push("--model", model);
 
     // 把监控台地址传下去:这个 claude 拉起的 MCP server 会继承它,
     // 于是 agent 报的事件一定落在**发起这次 Run 的那个监控台**上,而不是另起一个
@@ -130,12 +134,10 @@ function create(append, getSelfUrl) {
     const env = Object.assign({}, process.env);
     if (selfUrl) env.CODE_FORGE_URL = selfUrl;
 
-    let child;
-    try {
-      child = spawn("claude", args, { cwd: cwd, shell: true, env: env, stdio: ["pipe", "pipe", "pipe"] });
-    } catch (err) {
-      return { error: "起不了 claude CLI：" + err.message };
-    }
+    // 经 agentcli 起:解析成真实路径、**不走 shell**（shell:true 配数组参数不转义只拼接）
+    const started = cli.run(args, { cwd: cwd, env: env });
+    if (started.error) return { error: started.error };
+    const child = started.child;
     try {
       child.stdin.write(prompt);
       child.stdin.end();

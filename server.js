@@ -231,6 +231,17 @@ const server = http.createServer((req, res) => {
   if (url.pathname === "/agent/status" && req.method === "GET") {
     return json(res, 200, Object.assign({}, agent.status(), { loop: host.status() }));
   }
+  // 让协调者看一眼项目,给几条判据命令候选（只读、小模型、有超时;失败退回文件启发式）
+  if (url.pathname === "/agent/suggest-gate" && req.method === "POST") {
+    return readJson(req, res, (b) => {
+      require("./gatesuggest.js").suggest({
+        task: b && b.task, cwd: (b && b.cwd) || process.cwd(),
+        model: b && b.model, noModel: !!(b && b.noModel),
+        timeoutMs: b && b.timeoutMs
+      }).then((r) => json(res, 200, r))
+        .catch((e) => json(res, 200, { candidates: [], note: null, error: String(e.message) }));
+    });
+  }
   if (url.pathname === "/agent/prompt" && req.method === "POST") {
     // 只拼提示词不开跑 —— 想自己贴回聊天里的人用这条,零风险
     return readJson(req, res, (cfg) => json(res, 200, { prompt: agentrun.buildPrompt(cfg || {}) }));

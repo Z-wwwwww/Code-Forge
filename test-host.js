@@ -299,7 +299,7 @@ function testMcpEndToEnd() {
 }
 
 /* ---------------- 插件包装 ---------------- */
-function testPackaging() {
+async function testPackaging() {
   console.log("packaging — 即插即用的那几个文件");
   const plugin = JSON.parse(fs.readFileSync(path.join(__dirname, ".claude-plugin", "plugin.json"), "utf8"));
   assert.ok(plugin.mcpServers && plugin.mcpServers["code-forge"], "插件必须自带 MCP 声明,否则还要手动接");
@@ -337,6 +337,88 @@ function testPackaging() {
     assert.ok(agents.indexOf(w) >= 0, "AGENTS.md 里缺：" + w);
   });
   ok("AGENTS.md 给了 Codex / opencode 的接法与纯 HTTP 兜底");
+
+  // ---- 判据命令候选（gatesuggest.js）----
+  const gs = require("./gatesuggest.js");
+
+  // 解析要挺得住模型的各种吐法:markdown 包裹、前后带话、stream 外层、纯垃圾
+  const P = gs.parseCandidates;
+  assert.strictEqual(P('{"candidates":[{"command":"pytest -q"}]}').candidates[0].command, "pytest -q");
+  assert.strictEqual(P('```json\n{"candidates":[{"command":"npm test"}]}\n```').candidates[0].command, "npm test");
+  assert.strictEqual(P('看了一下。{"candidates":[{"command":"cargo test"}]} 以上').candidates[0].command, "cargo test");
+  assert.strictEqual(P(JSON.stringify({ type: "result", result: '{"candidates":[{"command":"go test ./..."}]}' }))
+    .candidates[0].command, "go test ./...");
+  assert.deepStrictEqual(P("I could not find any tests.").candidates, []);
+  assert.deepStrictEqual(P("").candidates, []);
+  assert.deepStrictEqual(P(null).candidates, []);
+  ok("候选解析挺得住 markdown/前后带话/外层包裹/垃圾/空");
+
+  // ★ 空数组 + note 必须原样保留 —— 「这个仓库没有可运行的检查」比编一条有用得多
+  const none = P('{"candidates":[],"note":"这个仓库没有任何可运行的检查"}');
+  assert.strictEqual(none.candidates.length, 0);
+  assert.ok(/没有任何可运行的检查/.test(none.note));
+  ok("★ 「没有可运行的检查」如实回空 + note（不编一条充数）");
+
+  // 脏条目一律丢:没有 command、空串、非字符串
+  const dirty = P('{"candidates":[{"why":"没 command"},{"command":""},{"command":123},{"command":"ok"}]}');
+  assert.deepStrictEqual(dirty.candidates.map((c) => c.command), ["ok"]);
+  ok("缺 command / 空 / 非字符串的候选被丢掉");
+
+  // 启发式只提议**真的存在**的东西:本项目 package.json 里有 test 脚本
+  const h = gs.heuristics(__dirname);
+  assert.ok(h.some((c) => /npm (run )?test/.test(c.command)), "本项目应能猜出 npm test");
+  // 不许凭空猜:一个空目录里应该什么都猜不出来
+  const empty = path.join(os.tmpdir(), "cf-empty-" + process.pid);
+  fs.mkdirSync(empty, { recursive: true });
+  assert.deepStrictEqual(gs.heuristics(empty), [], "空目录不许猜出任何命令");
+  fs.rmdirSync(empty);
+  ok("启发式只认真实文件（空目录一条都不猜）");
+
+  // npm run test / npm test 是同一条,不该占两个菜单位
+  const dd = P('{"candidates":[{"command":"npm test"},{"command":"npm run test"}]}');
+  assert.strictEqual(dd.candidates.length, 1, "npm test 与 npm run test 要去重");
+  ok("等价命令去重（npm test ⇄ npm run test）");
+
+  // noModel 时必须零调用、只走启发式 —— 这条是「不联网也能用」的保证
+  const noModel = await gs.suggest({ cwd: __dirname, noModel: true });
+  assert.strictEqual(noModel.source, "启发式");
+  ok("noModel 时零调用,只走文件启发式");
+
+  // 提议者用的是只读工具:它的活是看一眼然后提议,不是动手
+  const gsrc = fs.readFileSync(path.join(__dirname, "gatesuggest.js"), "utf8");
+  assert.ok(/"--allowedTools", "Read", "Grep", "Glob"/.test(gsrc), "建议者只许有只读工具");
+  assert.ok(/不许发明/.test(gsrc), "提示词里必须明写不许发明命令");
+  assert.ok(/timeoutMs/.test(gsrc) && /超时/.test(gsrc), "必须有超时（不能让人干等）");
+  ok("建议者只读 + 提示词禁止发明 + 有超时");
+
+  // ---- 起 agent 命令行必须安全（agentcli.js）----
+  const cli = require("./agentcli.js");
+  assert.strictEqual(cli.safeModel("sonnet"), "sonnet");
+  assert.strictEqual(cli.safeModel("claude-opus-4-8"), "claude-opus-4-8");
+  // ★ 模型名是用户填的,而它要进 argv。shell:true 配数组参数不转义只拼接
+  assert.strictEqual(cli.safeModel("sonnet & calc"), null);
+  assert.strictEqual(cli.safeModel("a;rm -rf /"), null);
+  assert.strictEqual(cli.safeModel(""), null);
+  ok("★ 模型名过白名单（挡住经 argv 的命令注入）");
+
+  const acsrc = fs.readFileSync(path.join(__dirname, "agentcli.js"), "utf8");
+  const arsrc = fs.readFileSync(path.join(__dirname, "agentrun.js"), "utf8");
+  assert.ok(acsrc.indexOf("shell") < 0 || /不用 shell/.test(acsrc), "agentcli 不许走 shell");
+  assert.ok(arsrc.indexOf('shell: true') < 0, "agentrun 不许再自己 spawn 带 shell");
+  assert.ok(gsrc.indexOf("shell: true") < 0, "gatesuggest 不许再自己 spawn 带 shell");
+  assert.ok(acsrc.indexOf("CODE_FORGE_AGENT_CLI") >= 0, "要能换成别的 agent 命令行");
+  ok("起进程不走 shell，且执行者命令行可替换");
+
+  // ---- 通用性要写清楚（这是用户会踩空的地方）----
+  const ag = fs.readFileSync(path.join(__dirname, "AGENTS.md"), "utf8");
+  assert.ok(/哪些通用/.test(ag), "AGENTS.md 要有通用性对照表");
+  ["loop_begin", "forge-", "CODE_FORGE_AGENT_CLI", "文件启发式"].forEach(function (w) {
+    assert.ok(ag.indexOf(w) >= 0, "通用性表里缺：" + w);
+  });
+  const sk = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
+  assert.ok(/候选/.test(sk) && /不许发明/.test(sk),
+    "候选式确认必须写进技能（这才是跨宿主通用的那一半）");
+  ok("通用性对照表在 AGENTS.md，候选式确认在技能里（跨宿主）");
 
   // ---- 终端界面（tui.js）----
   const tui = require("./tui.js");
@@ -482,7 +564,7 @@ function testPackaging() {
     await testStateMachine();
     await testStops();
     await testMcpEndToEnd();
-    testPackaging();
+    await testPackaging();
     console.log("\n" + pass + " 项断言全部通过（宿主驱动模式）");
     process.exit(0);
   } catch (err) {

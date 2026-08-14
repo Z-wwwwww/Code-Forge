@@ -365,10 +365,47 @@ function ask(rl, q, dflt) {
 async function wizard(rl) {
   console.log(C.teal(C.bold("CODE-FORGE")) + C.dim("  配置一次对抗回环（回车用括号里的默认值）\n"));
   const task = await ask(rl, "要做什么？");
-  const cmd = await ask(rl, "判据命令（能跑的那条，留空=判不出达标）", "");
   const cwd = await ask(rl, "工作目录", process.cwd());
+
+  // 判据命令:先让协调者看一眼项目给候选,选号即用,也可以直接把命令打进去。
+  // 建议只是省打字 —— 它没跑过那条命令,第一轮 loop_gate 才是真跑。
+  let cmd = "";
   let metric = null;
-  if (cmd) {
+  process.stdout.write(C.dim("\n正在让协调者看一眼项目…（Ctrl-C 可跳过）"));
+  let sug = { candidates: [] };
+  try { sug = await require("./gatesuggest.js").suggest({ task: task, cwd: cwd, timeoutMs: 60000 }); }
+  catch (e) { sug = { candidates: [], error: e.message }; }
+  process.stdout.write("\r" + " ".repeat(46) + "\r");
+
+  if (sug.candidates.length) {
+    console.log(C.dim("判据命令候选（" + (sug.source || "") + "）："));
+    sug.candidates.forEach(function (c, i) {
+      console.log("  " + (i + 1) + ") " + C.bold(c.command) +
+        (c.why ? C.dim("  — " + clip(c.why, 56)) : "") +
+        (c.metric ? C.dim("  [带指标 " + c.metric.name + "]") : ""));
+    });
+    if (sug.note) console.log(C.dim("  注：" + clip(sug.note, 80)));
+    console.log(C.dim("  0) 自己填 / 直接把命令打进来也行"));
+    const pick = await ask(rl, "判据命令", "1");
+    const n = Number(pick);
+    if (!isNaN(n) && n >= 1 && n <= sug.candidates.length) {
+      const chosen = sug.candidates[n - 1];
+      cmd = chosen.command;
+      metric = chosen.metric || null;
+      console.log(C.dim("  用 " + cmd + (metric ? "（指标 " + metric.name + "）" : "")));
+    } else if (pick === "0" || pick === "") {
+      cmd = await ask(rl, "  自己填（留空=判不出达标）", "");
+    } else {
+      cmd = pick;   // 不是号码就当成命令本身 —— 想直接打的人不该被逼着先选 0
+    }
+  } else {
+    if (sug.error) console.log(C.dim("协调者没能给出候选（" + clip(sug.error, 60) + "），自己填："));
+    if (sug.note) console.log(C.dim("注：" + clip(sug.note, 80)));
+    cmd = await ask(rl, "判据命令（能跑的那条，留空=判不出达标）", "");
+  }
+
+  // 候选自带指标就不必再问;否则给机会配一个
+  if (cmd && !metric) {
     const pattern = await ask(rl, "指标正则（留空=只看退出码）", "");
     if (pattern) {
       const name = await ask(rl, "  指标名", "指标");
