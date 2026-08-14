@@ -176,19 +176,53 @@ function askCoordinator(task, cwd, opts) {
  * 合并两条来源。协调者的排前面(它看过项目),启发式补后面。
  * 任何一侧失败都不影响另一侧 —— 这个功能只该让填写更省事,不该成为新的失败点。
  */
+// 目标太短/没说 = 还没确立目标。此时**不许**去问协调者:它只能按仓库现状给通用候选,
+// 而那种候选与「要做什么」无关,却长得像是为你的目标挑的 —— 比不给更误导。
+// 这道闸放在这一层(而不是只放在界面上),因为界面不止一个。
+// 阈值按**显示宽度**算(中日韩字符算 2),不是字符数:「修一下」是三个字、说得清楚,
+// 按字符数卡 4 会把它判成「还没说」;而「修」两格,确实不算目标。
+// 界面那侧必须用同一把尺 —— 两把尺必然有对不上的那天。
+const MIN_TASK = 4;
+function taskWidth(s) {
+  let w = 0;
+  for (const ch of String(s == null ? "" : s).trim()) {
+    w += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1;
+  }
+  return w;
+}
+function taskEstablished(task) {
+  return typeof task === "string" && taskWidth(task) >= MIN_TASK;
+}
+
 async function suggest(opts) {
   opts = opts || {};
   const cwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : process.cwd();
   const h = heuristics(cwd);
-  if (opts.noModel) return { candidates: h, note: null, source: "启发式" };
-  const c = await askCoordinator(opts.task, cwd, opts);
+  const task = (opts.task || "").trim();
+
+  if (!taskEstablished(task)) {
+    return {
+      candidates: h, note: null, source: "启发式",
+      basedOnTask: null,
+      needsTask: "还没说要做什么 —— 候选要贴着目标才有意义。" +
+        (h.length ? "下面这些只是按仓库文件猜的通用检查命令。" : "")
+    };
+  }
+  if (opts.noModel) {
+    return { candidates: h, note: null, source: "启发式", basedOnTask: task };
+  }
+
+  const c = await askCoordinator(task, cwd, opts);
   return {
     candidates: dedupe(c.candidates.concat(h)),
     note: c.note || null,
     error: c.error || null,
-    source: c.candidates.length ? "协调者 + 启发式" : "启发式"
+    source: c.candidates.length ? "协调者 + 启发式" : "启发式",
+    // 候选是为**这个**目标挑的。目标改了,上一批就过期了 —— 调用方据此标脏。
+    basedOnTask: task
   };
 }
 
 module.exports = { suggest: suggest, heuristics: heuristics, parseCandidates: parseCandidates,
-  buildPrompt: buildPrompt, askCoordinator: askCoordinator };
+  buildPrompt: buildPrompt, askCoordinator: askCoordinator,
+  taskEstablished: taskEstablished, taskWidth: taskWidth, MIN_TASK: MIN_TASK };

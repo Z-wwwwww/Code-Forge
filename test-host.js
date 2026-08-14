@@ -384,6 +384,49 @@ async function testPackaging() {
   assert.strictEqual(noModel.source, "启发式");
   ok("noModel 时零调用,只走文件启发式");
 
+  // ★ 目标没确立之前不许问协调者:它只能按仓库现状给通用命令,而那些命令
+  //   长得像是为你的目标挑的 —— 比不给更误导。闸放在这一层,因为界面不止一个。
+  assert.strictEqual(gs.taskEstablished("修一下"), true);
+  assert.strictEqual(gs.taskEstablished("修"), false);
+  assert.strictEqual(gs.taskEstablished("   "), false);
+  assert.strictEqual(gs.taskEstablished(undefined), false);
+  for (const t of [undefined, "", "  ", "修"]) {
+    const r = await gs.suggest({ task: t, cwd: __dirname });   // 没目标 → 绝不该起协调者
+    assert.strictEqual(r.source, "启发式", "没目标时不许问协调者（task=" + JSON.stringify(t) + "）");
+    assert.strictEqual(r.basedOnTask, null);
+    assert.ok(r.needsTask, "没目标时必须明说「先说要做什么」");
+  }
+  ok("★ 目标没确立 → 不问协调者，只给启发式并明说原因");
+
+  // 候选要带上「为哪个目标挑的」,调用方才能在目标改了之后标脏
+  const withTask = await gs.suggest({ task: "把重复回调修掉", cwd: __dirname, noModel: true });
+  assert.strictEqual(withTask.basedOnTask, "把重复回调修掉");
+  ok("候选带 basedOnTask（目标改了才能标脏）");
+
+  // 页面上那道闸:按钮默认 disabled、目标变了标脏、目标清空无条件收掉候选
+  const setupHtml = fs.readFileSync(path.join(__dirname, "setup.html"), "utf8");
+  assert.ok(/id="suggest"[^>]*disabled/.test(setupHtml), "建议按钮默认必须是 disabled");
+  assert.ok(/sugTask !== str\("task"\)/.test(setupHtml), "目标改了要能看出候选过期");
+  assert.ok(/目标改了/.test(setupHtml), "过期要有人话提示");
+  assert.ok(setupHtml.indexOf("① 目标") >= 0 && setupHtml.indexOf("② 判据") >= 0,
+    "页面顺序要写明先目标后判据");
+  // 无条件收掉:之前是 if (sugTask !== null) 才收,于是别的路径留下的候选会在目标没了之后继续挂着
+  const gateFn = /function syncSuggestGate\(\)[\s\S]*?\n}/.exec(setupHtml)[0];
+  const notOk = gateFn.indexOf("if (!ok) {");
+  const hide = gateFn.indexOf('box.classList.add("hide")');
+  assert.ok(notOk >= 0 && hide > notOk, "目标不合格时要收掉候选");
+  assert.ok(!/if \(sugTask !== null\) \{ box\.classList\.add\("hide"\)/.test(gateFn),
+    "收候选不许再有 sugTask 前置条件");
+  ok("页面：按钮默认禁用 / 目标改了标脏 / 目标清空无条件收候选");
+
+  // 向导里目标是第一问,且太短会重问 —— 顺序不能反
+  const tsrc0 = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
+  const qTask = tsrc0.indexOf('"① 要做什么？"');
+  const qSuggest = tsrc0.indexOf("gsug.suggest(");
+  assert.ok(qTask >= 0 && qSuggest > qTask, "向导必须先问目标再取候选");
+  assert.ok(/while \(!gsug\.taskEstablished\(task\)\)/.test(tsrc0), "目标太短要重问");
+  ok("向导：先问目标（太短重问），之后才按目标取候选");
+
   // 提议者用的是只读工具:它的活是看一眼然后提议,不是动手
   const gsrc = fs.readFileSync(path.join(__dirname, "gatesuggest.js"), "utf8");
   assert.ok(/"--allowedTools", "Read", "Grep", "Glob"/.test(gsrc), "建议者只许有只读工具");

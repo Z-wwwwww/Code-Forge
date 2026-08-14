@@ -108,25 +108,32 @@ button:disabled{opacity:.45;cursor:not-allowed}
   </header>
 
   <section class="card">
-    <h2>目标 <span class="tag">判据由代码跑</span></h2>
+    <h2>① 目标 <span class="tag">先定这个</span></h2>
     <p class="hint">
-      一句话说清要做什么,再给一条<strong>能跑的命令</strong>当判据:退出码 0 且(可选)指标落进区间 = 达标,立刻停。
-      判据留空也能跑,但那次回环<strong>判不出达标</strong>,只能靠轮数/时限停 —— 页面会如实标「未判定」。
+      一句话说清要做什么。<strong>判据候选是按它挑的</strong> —— 先有目标,后面那一步才给得出贴题的命令。
     </p>
     <div class="grid">
       <label>要做什么<textarea id="task" placeholder="把 payments/webhook 的重复回调修掉，不要动对外接口"></textarea></label>
-    </div>
-    <div class="grid g2" style="margin-top:11px">
-      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
-        <span class="note">在下面这个目录里执行,退出码 0 算过</span></label>
       <label>工作目录<input id="cwd" class="mono" placeholder="留空 = 监控台进程所在目录" />
         <span class="note">agent 会在这个目录里干活</span></label>
     </div>
-    <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button type="button" class="ghost" id="suggest">让协调者看一眼项目，给几条候选</button>
-      <span class="msg" id="sugmsg"></span>
+  </section>
+
+  <section class="card">
+    <h2>② 判据 <span class="tag">由代码跑，不问模型</span></h2>
+    <p class="hint">
+      一条<strong>能跑的命令</strong>:退出码 0 且(可选)指标落进区间 = 达标,立刻停。
+      留空也能跑,但那次回环<strong>判不出达标</strong>,只能靠轮数/时限停 —— 终端与页面都会标「未判定」。
+    </p>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <button type="button" class="ghost" id="suggest" disabled>按目标让协调者给几条候选</button>
+      <span class="msg" id="sugmsg">先在 ① 里说清要做什么</span>
     </div>
-    <div id="sugbox" class="hide" style="margin-top:9px;display:flex;flex-direction:column;gap:6px"></div>
+    <div id="sugbox" class="hide" style="margin-bottom:11px;display:flex;flex-direction:column;gap:6px"></div>
+    <div class="grid">
+      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
+        <span class="note">在 ① 的工作目录里执行,退出码 0 算过</span></label>
+    </div>
     <div class="grid g4" style="margin-top:11px">
       <label>指标名<input id="mname" placeholder="覆盖率" /></label>
       <label>抓取正则<input id="mpattern" class="mono" placeholder="coverage[^0-9]*([0-9]+)" />
@@ -346,16 +353,67 @@ $("stop").addEventListener("click", async function(){
   setMsg("已请求停止", "ok");
   refresh();
 });
+// ---- ① 目标 → ② 判据候选 的依赖关系，要在界面上真的成立 ----
+// 目标没填就不许取候选：没有目标时协调者只能按仓库现状给通用命令，
+// 而它们长得像是为你的目标挑的 —— 比不给更误导。
+// 阈值按显示宽度算（中日韩字符算 2），与服务端 gatesuggest.taskEstablished 同一把尺 ——
+// 一边按字符数、一边按宽度，必然有对不上的那天（「修一下」会被一边放过、一边拦下）
+var MIN_TASK = 4;
+var sugTask = null;          // 上一批候选是为哪个目标取的
+function taskWidth(s){
+  var w = 0;
+  for (var ch of String(s || "").trim()) {
+    w += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1;
+  }
+  return w;
+}
+function taskOk(){ return taskWidth(str("task")) >= MIN_TASK; }
+
+function syncSuggestGate(){
+  var btn = $("suggest"), m = $("sugmsg"), box = $("sugbox");
+  var ok = taskOk();
+  btn.disabled = !ok;
+  if (!ok) {
+    m.className = "msg"; m.textContent = "先在 ① 里说清要做什么";
+    // 目标被清空/退回太短 → 上一批候选立刻作废。**无条件收掉**：
+    // 之前这里只在 sugTask 非空时才收，于是任何别的路径让候选出现在屏幕上时，
+    // 它们会在目标已经没了之后继续挂着，看上去仍然有效。
+    box.classList.add("hide"); box.innerHTML = ""; box.style.opacity = "1"; sugTask = null;
+    return;
+  }
+  if (sugTask !== null && sugTask !== str("task")) {
+    // 目标改了 → 旧候选过期。这里刻意不自动重取（那会连打字都触发调用），
+    // 但必须**看得出来它过期了** —— 静默留着才是坑。
+    box.style.opacity = "0.45";
+    m.className = "msg err";
+    m.textContent = "目标改了，下面这些是按旧目标挑的 —— 重新取一次";
+  } else if (sugTask !== null) {
+    box.style.opacity = "1";
+  } else {
+    m.className = "msg"; m.textContent = "";
+  }
+}
+$("task").addEventListener("input", syncSuggestGate);
+
 // 让协调者看一眼项目，给几条判据候选。它只读、有超时；失败自动退回文件启发式。
 // 建议不等于验证 —— 第一轮 loop_gate 才真跑那条命令。
 $("suggest").addEventListener("click", async function(){
   var btn = this, m = $("sugmsg"), box = $("sugbox");
-  btn.disabled = true; m.className = "msg"; m.textContent = "正在看项目…（只读，最多 60s）";
+  if (!taskOk()) { syncSuggestGate(); return; }
+  var askedFor = str("task");          // 记下这批候选是为哪个目标取的
+  btn.disabled = true; box.style.opacity = "1";
+  m.className = "msg"; m.textContent = "按目标看项目…（只读，最多 60s）";
   try {
     var res = await fetch("/agent/suggest-gate", { method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({ task: str("task"), cwd: str("cwd") || null }) });
+      body: JSON.stringify({ task: askedFor, cwd: str("cwd") || null }) });
     var d = await res.json();
     box.innerHTML = "";
+    sugTask = askedFor;
+    if (d.needsTask) {   // 服务端那道闸也说了没目标 —— 两边口径一致
+      box.classList.add("hide"); sugTask = null;
+      m.className = "msg err"; m.textContent = d.needsTask;
+      btn.disabled = false; return;
+    }
     if (!d.candidates || !d.candidates.length) {
       box.classList.add("hide");
       m.className = "msg err";
@@ -388,7 +446,8 @@ $("suggest").addEventListener("click", async function(){
         m.className = "msg ok"; m.textContent = "已填入（可以直接改）";
       }, { once: false });
       m.className = "msg";
-      m.textContent = (d.source || "") + (d.note ? "　注：" + d.note : "") + "　选一条，或自己改输入框";
+      m.textContent = "按目标「" + (askedFor.length > 18 ? askedFor.slice(0, 18) + "…" : askedFor) + "」· " +
+        (d.source || "") + (d.note ? "　注：" + d.note : "");
     }
   } catch (err) {
     m.className = "msg err"; m.textContent = "取候选失败：" + err.message;
@@ -408,7 +467,7 @@ $("copyPrompt").addEventListener("click", function(){
   navigator.clipboard.writeText($("promptout").value).then(function(){ setMsg("已复制", "ok"); });
 });
 
-renderRoles(); renderPerm(); refresh();
+renderRoles(); renderPerm(); syncSuggestGate(); refresh();
 poll = setInterval(refresh, 3000);
 </script>
 </body>

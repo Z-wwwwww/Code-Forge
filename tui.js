@@ -364,21 +364,29 @@ function ask(rl, q, dflt) {
 
 async function wizard(rl) {
   console.log(C.teal(C.bold("CODE-FORGE")) + C.dim("  配置一次对抗回环（回车用括号里的默认值）\n"));
-  const task = await ask(rl, "要做什么？");
-  const cwd = await ask(rl, "工作目录", process.cwd());
+  // 第一步就是确立目标 —— 后面的判据候选全靠它,空着往下走只会拿到一堆通用命令
+  const gsug = require("./gatesuggest.js");
+  let task = await ask(rl, "① 要做什么？");
+  while (!gsug.taskEstablished(task)) {
+    console.log(C.yellow("  目标太短。判据候选是按目标挑的,先说清要做什么(一句话就行)。"));
+    task = await ask(rl, "① 要做什么？");
+  }
+  const cwd = await ask(rl, "② 工作目录", process.cwd());
 
-  // 判据命令:先让协调者看一眼项目给候选,选号即用,也可以直接把命令打进去。
+  // 判据命令:让协调者**按上面那个目标**看一眼项目给候选,选号即用,也可以直接把命令打进去。
   // 建议只是省打字 —— 它没跑过那条命令,第一轮 loop_gate 才是真跑。
   let cmd = "";
   let metric = null;
-  process.stdout.write(C.dim("\n正在让协调者看一眼项目…（Ctrl-C 可跳过）"));
+  console.log("");
+  console.log(C.dim("③ 判据命令 —— 按目标「") + clip(task, 40) + C.dim("」找候选…"));
+  process.stdout.write(C.dim("   正在看项目（只读，最多 60s）…"));
   let sug = { candidates: [] };
-  try { sug = await require("./gatesuggest.js").suggest({ task: task, cwd: cwd, timeoutMs: 60000 }); }
+  try { sug = await gsug.suggest({ task: task, cwd: cwd, timeoutMs: 60000 }); }
   catch (e) { sug = { candidates: [], error: e.message }; }
   process.stdout.write("\r" + " ".repeat(46) + "\r");
 
   if (sug.candidates.length) {
-    console.log(C.dim("判据命令候选（" + (sug.source || "") + "）："));
+    console.log(C.dim("   候选（" + (sug.source || "") + "，按可信度排）："));
     sug.candidates.forEach(function (c, i) {
       console.log("  " + (i + 1) + ") " + C.bold(c.command) +
         (c.why ? C.dim("  — " + clip(c.why, 56)) : "") +

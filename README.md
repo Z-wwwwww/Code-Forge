@@ -43,7 +43,7 @@ MCP: claude mcp add --scope user code-forge
 ### ① 终端里（推荐,不弹网页）
 
 ```
-code-forge tui        # 问几个问题 → 开跑 → 就地直播（判据命令有候选可挑，不用自己想）
+code-forge tui        # ① 先说目标 → ② 按目标给判据候选（挑号即用）→ ③ 开跑 → 就地直播
 code-forge watch      # 只直播（回环是从聊天里 /code-forge 起的时候用这个）
 ```
 
@@ -161,7 +161,7 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 57 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
+node test-host.js    # 61 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
 node test.js         # 29 项：本地驱动模式（可选）
 ```
 
