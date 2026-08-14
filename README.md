@@ -1,7 +1,7 @@
 # code-forge
 
 **对抗回环插件**:一个角色提方案、一个角色专门推翻它、由**代码**跑判据裁定,不达标就带着失败信息再来一轮 ——
-全过程实时直播到本地监控台网页。
+全过程实时直播 —— **在终端里**（`code-forge tui`），或网页监控台。
 
 **执行者是你的 coding agent 自己**(Claude Code / Codex / opencode …)。它已经有模型访问权,
 所以**不需要配任何 API key**,也不产生额外的模型账单。
@@ -36,11 +36,24 @@ MCP: claude mcp add --scope user code-forge
 ```
 
 两条路等价,别同时用(会装两份技能)。其它宿主(Codex / opencode / 任何支持 stdio MCP 的)
-见 **`AGENTS.md`**。第一次用时监控台**自动拉起并打开浏览器**。
+见 **`AGENTS.md`**。第一次用时监控台自动拉起（走 `tui` 则不弹浏览器）。
 
-## 用:两条路
+## 用:三条路
 
-### ① 页面上填完,点 Run
+### ① 终端里（推荐,不弹网页）
+
+```
+code-forge tui        # 问几个问题 → 开跑 → 就地直播
+code-forge watch      # 只直播（回环是从聊天里 /code-forge 起的时候用这个）
+```
+
+直播界面就在终端里:判据走势(`R1 68 → R2 74 → R3 82` 一眼看出在不在收敛)、角色表、本轮谁说了什么、
+停止原因。按键:`s` 停止 / `o` 打开网页 / `q` 退出(**回环仍在后台跑**,`watch` 可以再接回来)。
+
+不想回答问题:`--config cfg.json` 用现成配置,`--preset` 用这个目录里上次存下的 `.code-forge.json`。
+管道/CI 里(不是 TTY)自动退化成一行一条的顺序输出,不画屏、不进 raw mode。
+
+### ② 页面上填完,点 Run
 
 ```
 code-forge          # 起监控台（第一次用 MCP 时也会自动拉起）
@@ -58,7 +71,7 @@ headless Claude Code(`claude -p`)当执行者,用你自己的订阅,**不需要 
 `bypassPermissions`(**危险**:能改任何文件、跑任何命令,没人拦)。
 回环自己的五个工具与只读工具是**预先精确放行**的,其余一律按你选的模式走。
 
-### ② 在聊天里说一句
+### ③ 在聊天里说一句
 
 ```
 /code-forge 把 payments/webhook 的重复回调修掉，pytest 全绿且覆盖率 ≥ 80%
@@ -113,7 +126,7 @@ loop_begin  → 开局，浏览器弹出监控台
 2. **不许为了达标去改判据** —— 不放宽阈值、不注释掉失败用例、不换一条更好过的命令。那是把尺子锯短。
 3. 停了要如实说是哪一条原因。「烧完预算」说成「已完成」是这里最不能出的错。
 
-## 停止原因（七种，页头显示真的那一条）
+## 停止原因（七种，终端与页头都显示真的那一条）
 
 | reason | 含义 | 你下一步该做什么 |
 |---|---|---|
@@ -121,7 +134,7 @@ loop_begin  → 开局，浏览器弹出监控台
 | `budget_rounds` / `budget_time` | 轮数/时限到顶 | 加预算再来,或换个更小的目标 |
 | `no_progress` | 指标连续 N 轮不往目标方向走 | 方向错了,别再喂轮次 |
 | `gate_broken` | 判据命令跑不起来/超时/正则抓不到数 | **先修判据**,这时的「未达标」不算数据 |
-| `stopped` | 你在页面上按了停 | — |
+| `stopped` | 你按了停（终端 `s` 键 / 页面按钮） | — |
 | `abandoned` | agent 自己判断做不下去(detail 里有理由) | 读它的理由 |
 
 ## 关于 token
@@ -148,7 +161,7 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 42 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
+node test-host.js    # 47 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
 node test.js         # 29 项：本地驱动模式（可选）
 ```
 
@@ -159,7 +172,8 @@ node test.js         # 29 项：本地驱动模式（可选）
 
 ```
 install.js                         一条命令接入 Claude Code（幂等 / --dry-run / --uninstall）
-agentrun.js                        页面点 Run：拼提示词 + 起 headless claude -p + 解 stream-json
+tui.js                             终端界面：问答向导 + 就地直播（纯函数渲染，非 TTY 自动退化）
+agentrun.js                        点 Run/tui 启动：拼提示词 + 起 headless claude -p + 解 stream-json
 skills/code-forge/SKILL.md   技能：协议 + 三条纪律（给 agent 读的那份）
 agents/forge-proposer|critic|reviewer.md  三个角色，各绑不同模型与工具集
 commands/code-forge.toml     /code-forge 斜杠命令（插件版）

@@ -34,6 +34,9 @@ if (flag("help") || flag("h")) {
 
   code-forge [选项]
 
+  tui               在终端里配置并直播（不弹网页；--config f.json / --preset 可跳过问答）
+  watch             只在终端里直播已经在跑的回环
+
   --demo            日志为空时灌入示例回环(4 轮支付幂等性对抗)
   --live            配合 --demo:按时间轴逐条播出,看得见流式追加
   --reset           先清掉现有日志
@@ -41,15 +44,27 @@ if (flag("help") || flag("h")) {
   --port <n>        端口(默认 4610,被占用则自动 +1)
   --no-open         不自动打开浏览器
   --mcp             以 MCP server(stdio)运行,供各家 coding agent 接入
-  --url <base>      配合 --mcp:监控台地址(默认 http://localhost:4610)
+  --url <base>      配合 --mcp:监控台地址(默认按端口文件/环境变量发现)
 
-  配置并启动回环:打开 http://localhost:4610/setup
+  配置并启动回环:  code-forge tui        （终端里,推荐）
+                   http://localhost:4610/setup  （网页）
 
   往里喂事件:
   curl -X POST localhost:4610/events -H 'content-type: application/json' \\
        -d '{"t":"event","round":1,"role":"critic","kind":"attack","summary":"…"}'
 `);
   process.exit(0);
+}
+
+// 终端界面:配置 + 直播都在 CLI 里,不弹网页
+if (argv[0] === "tui" || argv[0] === "watch") {
+  // ⚠ 必须显式调 main:被 require 进来时 tui.js 里的 require.main===module 是假,
+  // 只 require 一下等于什么都没发生(静默退出,用户以为命令坏了)
+  require("./tui.js").main(argv).catch((e) => {
+    console.error("出错：" + e.message);
+    process.exit(1);
+  });
+  return;
 }
 
 // MCP 模式:只跑 stdio server,不起 HTTP、不碰日志文件

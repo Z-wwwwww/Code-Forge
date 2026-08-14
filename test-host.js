@@ -338,6 +338,56 @@ function testPackaging() {
   });
   ok("AGENTS.md 给了 Codex / opencode 的接法与纯 HTTP 兜底");
 
+  // ---- 终端界面（tui.js）----
+  const tui = require("./tui.js");
+  const st = tui.newState();
+  [{ t: "run.start", session: "S", mode: "host", goal: "G", budget: { rounds: 6 } },
+   { t: "role.add", id: "role1", name: "提议者", model: "sonnet" },
+   { t: "role.add", id: "gate", name: "判据", model: "确定性 · 无模型" },
+   { t: "round.start", n: 1 },
+   { t: "event", round: 1, role: "role1", kind: "propose", ts: "10:00:01", summary: "补用例" },
+   { t: "event", round: 1, role: "gate", kind: "test", ts: "10:00:09", summary: "未达标 · 覆盖率 68", meta: { value: 68 } },
+   { t: "round.end", n: 1, winner: "未达标", score: "覆盖率 68" },
+   { t: "round.start", n: 2 },
+   { t: "event", round: 2, role: "gate", kind: "test", ts: "10:01:09", summary: "达标 · 覆盖率 82", meta: { value: 82 } },
+   { t: "run.end", reason: "goal_met", detail: "exit 0 · 覆盖率 82", rounds: 2, seconds: 96 }
+  ].forEach(function (e) { tui.reduce(st, e); });
+  const out = tui.render(st, 96);
+  assert.ok(out.indexOf("R1 68") >= 0 && out.indexOf("R2 82") >= 0, "判据走势必须出现在画面上");
+  assert.ok(out.indexOf("达标停止") >= 0, "停止原因要显示成人话");
+  assert.ok(out.indexOf("提议者") >= 0 && out.indexOf("判据") >= 0, "角色表要有名字");
+  ok("TUI 渲染是纯函数：判据走势 / 停止原因 / 角色表都在");
+
+  // 一条 gate 事件都没有时不许画一排「—」——那会被读成「量过了,没有数」
+  const st2 = tui.newState();
+  [{ t: "run.start", session: "S" }, { t: "round.start", n: 1 },
+   { t: "event", round: 1, role: "r1", kind: "propose", summary: "x" }].forEach((e) => tui.reduce(st2, e));
+  assert.ok(tui.render(st2, 96).indexOf("判据") < 0, "没有判据事件时整行不画");
+  ok("没有判据事件时不画判据行（不假装量过）");
+
+  // 新一轮 run.start 要换一茬,否则两次回环的「第 1 轮」挤在同一格（与网页同一条纪律）
+  const st3 = tui.newState();
+  [{ t: "run.start", session: "A" }, { t: "round.start", n: 1 },
+   { t: "event", round: 1, role: "r1", summary: "第一次" },
+   { t: "run.start", session: "B" }, { t: "round.start", n: 1 },
+   { t: "event", round: 1, role: "r1", summary: "第二次" }].forEach((e) => tui.reduce(st3, e));
+  assert.strictEqual(st3.rounds.length, 1);
+  assert.strictEqual(st3.rounds[0].events.length, 1, "第二次回环不该继承第一次的事件");
+  assert.strictEqual(st3.run.session, "B");
+  ok("遇到新 run.start 换一茬（两次回环不混格）");
+
+  // 非 TTY 时不许画屏:clear-screen 与 raw mode 在管道/CI 里只会产出垃圾
+  const tsrc = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
+  assert.ok(/function paint\(\) \{\s*if \(!TTY\) return;/.test(tsrc), "paint 必须在非 TTY 时直接返回");
+  assert.ok(/if \(TTY\) \{[\s\S]*setRawMode/.test(tsrc), "raw mode 必须裹在 TTY 判断里");
+  ok("非 TTY 时退化成逐行输出（不画屏、不进 raw mode）");
+
+  // ★ stdin 提前关掉必须吼一声 —— 否则 await 挂住、进程静默退出,用户以为命令坏了
+  assert.ok(tsrc.indexOf('rl.once("close", onClose)') >= 0, "ask 必须守住 rl close");
+  assert.ok(/stdin 不是终端/.test(tsrc), "非交互时要给出可行动的提示");
+  assert.ok(tsrc.indexOf("--config") >= 0 && tsrc.indexOf("--preset") >= 0, "要有可脚本化的入口");
+  ok("★ stdin 关掉时报错而不是静默退出，并给出 --config/--preset");
+
   // ---- 页面点 Run（headless agent）----
   const ar = fs.readFileSync(path.join(__dirname, "agentrun.js"), "utf8");
   // ★ 提示词必须走 stdin。Windows 上要 shell:true 才起得动 claude.cmd,而 shell 会把
