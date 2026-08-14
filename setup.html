@@ -93,6 +93,12 @@ button:disabled{opacity:.45;cursor:not-allowed}
   font-size:11.5px;line-height:1.7;color:var(--tx-3);white-space:pre-wrap}
 .hide{display:none}
 .promptbox textarea{width:100%;min-height:160px}
+/* ② 判据在 ① 目标填好之前是锁着的 —— 顺序在界面上要看得见，不能只写在文案里 */
+.card.locked{opacity:.5}
+.card.locked input,.card.locked select{pointer-events:none}
+.spin::after{content:"";display:inline-block;width:7px;height:7px;margin-left:6px;border-radius:50%;
+  background:var(--acc);animation:p 1.1s ease-in-out infinite;vertical-align:middle}
+@media (prefers-reduced-motion:reduce){.spin::after{animation:none}}
 </style>
 </head>
 <body>
@@ -119,20 +125,21 @@ button:disabled{opacity:.45;cursor:not-allowed}
     </div>
   </section>
 
-  <section class="card">
-    <h2>② 判据 <span class="tag">由代码跑，不问模型</span></h2>
+  <section class="card locked" id="gatecard">
+    <h2>② 判据 <span class="tag">按 ① 的目标自动生成</span></h2>
     <p class="hint">
-      一条<strong>能跑的命令</strong>:退出码 0 且(可选)指标落进区间 = 达标,立刻停。
-      留空也能跑,但那次回环<strong>判不出达标</strong>,只能靠轮数/时限停 —— 终端与页面都会标「未判定」。
+      填完上面的目标就会自动出候选 —— 一条<strong>能跑的命令</strong>:退出码 0 且(可选)指标落进区间
+      = 达标,立刻停。挑一条,或者直接在输入框里改成你自己的。
     </p>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      <button type="button" class="ghost" id="suggest" disabled>按目标让协调者给几条候选</button>
-      <span class="msg" id="sugmsg">先在 ① 里说清要做什么</span>
+      <span class="msg" id="sugmsg">↑ 先说清要做什么，这里会自动出判据命令</span>
+      <span class="grow"></span>
+      <button type="button" class="ghost hide" id="suggest">重新取</button>
     </div>
     <div id="sugbox" class="hide" style="margin-bottom:11px;display:flex;flex-direction:column;gap:6px"></div>
     <div class="grid">
-      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
-        <span class="note">在 ① 的工作目录里执行,退出码 0 算过</span></label>
+      <label>判据命令<input id="cmd" class="mono" placeholder="填完 ① 会自动填上，也可以自己写" />
+        <span class="note">在 ① 的工作目录里执行,退出码 0 算过;留空 = 这次判不出达标</span></label>
     </div>
     <div class="grid g4" style="margin-top:11px">
       <label>指标名<input id="mname" placeholder="覆盖率" /></label>
@@ -369,12 +376,16 @@ function taskWidth(s){
 }
 function taskOk(){ return taskWidth(str("task")) >= MIN_TASK; }
 
+var inflight = false;
+var wasAuto = false;   // 判据命令是自动填的（用户手写过就不再覆盖他的）
+
 function syncSuggestGate(){
-  var btn = $("suggest"), m = $("sugmsg"), box = $("sugbox");
+  var m = $("sugmsg"), box = $("sugbox");
   var ok = taskOk();
-  btn.disabled = !ok;
+  $("gatecard").classList.toggle("locked", !ok);
+  $("suggest").classList.toggle("hide", !ok || sugTask === null);
   if (!ok) {
-    m.className = "msg"; m.textContent = "先在 ① 里说清要做什么";
+    m.className = "msg"; m.textContent = "↑ 先说清要做什么，这里会自动出判据命令";
     // 目标被清空/退回太短 → 上一批候选立刻作废。**无条件收掉**：
     // 之前这里只在 sugTask 非空时才收，于是任何别的路径让候选出现在屏幕上时，
     // 它们会在目标已经没了之后继续挂着，看上去仍然有效。
@@ -382,27 +393,45 @@ function syncSuggestGate(){
     return;
   }
   if (sugTask !== null && sugTask !== str("task")) {
-    // 目标改了 → 旧候选过期。这里刻意不自动重取（那会连打字都触发调用），
-    // 但必须**看得出来它过期了** —— 静默留着才是坑。
     box.style.opacity = "0.45";
     m.className = "msg err";
-    m.textContent = "目标改了，下面这些是按旧目标挑的 —— 重新取一次";
+    m.textContent = "目标改了，下面这些是按旧目标挑的 —— 松开输入框会重新取";
   } else if (sugTask !== null) {
     box.style.opacity = "1";
-  } else {
-    m.className = "msg"; m.textContent = "";
   }
 }
-$("task").addEventListener("input", syncSuggestGate);
+
+/**
+ * 目标一确立就**自动**按它去出判据命令 —— 不必再点一次按钮。
+ * 触发点选「输入框失焦 / 停手 1.5 秒」而不是每次按键:每次按键都调一次协调者是在烧钱。
+ * 同一段目标不重复取(sugTask 记着上次为谁取的),在途时不叠加。
+ */
+var idle = null;
+function maybeAutoSuggest(){
+  if (!taskOk() || inflight) return;
+  if (sugTask === str("task")) return;      // 这段目标已经取过了
+  fetchSuggestions();
+}
+$("task").addEventListener("input", function(){
+  syncSuggestGate();
+  clearTimeout(idle);
+  idle = setTimeout(maybeAutoSuggest, 1500);   // 停手 1.5s 就去取
+});
+$("task").addEventListener("change", function(){ clearTimeout(idle); maybeAutoSuggest(); });  // 失焦立刻取
+$("cwd").addEventListener("change", function(){
+  // 换了目录,候选的前提也变了(候选是照那个目录里的文件挑的)
+  if (sugTask !== null) { sugTask = null; maybeAutoSuggest(); }
+});
 
 // 让协调者看一眼项目，给几条判据候选。它只读、有超时；失败自动退回文件启发式。
 // 建议不等于验证 —— 第一轮 loop_gate 才真跑那条命令。
-$("suggest").addEventListener("click", async function(){
-  var btn = this, m = $("sugmsg"), box = $("sugbox");
+async function fetchSuggestions(){
+  var btn = $("suggest"), m = $("sugmsg"), box = $("sugbox");
   if (!taskOk()) { syncSuggestGate(); return; }
   var askedFor = str("task");          // 记下这批候选是为哪个目标取的
+  inflight = true;
   btn.disabled = true; box.style.opacity = "1";
-  m.className = "msg"; m.textContent = "按目标看项目…（只读，最多 60s）";
+  m.className = "msg spin"; m.textContent = "正在按目标找判据命令（只读，最多 60s）";
   try {
     var res = await fetch("/agent/suggest-gate", { method:"POST", headers:{"content-type":"application/json"},
       body: JSON.stringify({ task: askedFor, cwd: str("cwd") || null }) });
@@ -414,24 +443,39 @@ $("suggest").addEventListener("click", async function(){
       m.className = "msg err"; m.textContent = d.needsTask;
       btn.disabled = false; return;
     }
-    if (!d.candidates || !d.candidates.length) {
+    // 分两拨：协调者按**你的目标**挑的，与「只是按仓库文件猜的」。
+    // 后者与目标无关，不能混进去当默认值 —— 那等于拿一条不相干的命令当 judge。
+    var byCoord = (d.candidates || []).filter(function(c){ return c.from === "协调者"; });
+    var byFile = (d.candidates || []).filter(function(c){ return c.from !== "协调者"; });
+    var ordered = byCoord.concat(byFile);
+    if (!ordered.length) {
       box.classList.add("hide");
       m.className = "msg err";
       m.textContent = (d.note || d.error || "没给出候选") + " —— 自己填一条";
     } else {
       box.classList.remove("hide");
-      d.candidates.forEach(function(c, i){
-        var row = document.createElement("label");
-        row.className = "radio";
-        row.innerHTML = '<input type="radio" name="sug" value="' + i + '" />' +
-          '<span><b>' + esc(c.command) + '</b><i>' + esc(c.why || "") +
-          (c.metric ? "　[带指标 " + esc(c.metric.name) + "]" : "") +
-          "　" + esc(c.from || "") + '</i></span>';
-        box.appendChild(row);
-      });
-      box.addEventListener("change", function(ev){
-        if (ev.target.name !== "sug") return;
-        var c = d.candidates[+ev.target.value];
+      var addGroup = function(list, offset, title, dim){
+        if (!list.length) return;
+        var h = document.createElement("div");
+        h.className = "note";
+        h.style.margin = "2px 0 0";
+        h.textContent = title;
+        box.appendChild(h);
+        list.forEach(function(c, i){
+          var row = document.createElement("label");
+          row.className = "radio";
+          if (dim) row.style.opacity = "0.75";
+          row.innerHTML = '<input type="radio" name="sug" value="' + (offset + i) + '" />' +
+            '<span><b>' + esc(c.command) + '</b><i>' + esc(c.why || "") +
+            (c.metric ? "　[带指标 " + esc(c.metric.name) + "]" : "") + '</i></span>';
+          box.appendChild(row);
+        });
+      };
+      addGroup(byCoord, 0, "按你的目标挑的", false);
+      addGroup(byFile, byCoord.length, (byCoord.length ? "以下与目标无关，" : "") + "只是按仓库文件猜的", true);
+      var choose = function(i){
+        var c = ordered[i];
+        if (!c) return;
         $("cmd").value = c.command;
         // 候选自带指标就顺手填上，省得再想正则
         if (c.metric) {
@@ -440,20 +484,46 @@ $("suggest").addEventListener("click", async function(){
           if (c.metric.min != null) $("mmin").value = c.metric.min;
           if (c.metric.max != null) $("mmax").value = c.metric.max;
         }
-        Array.from(box.querySelectorAll(".radio")).forEach(function(r, i){
-          r.classList.toggle("on", i === +ev.target.value);
+        Array.from(box.querySelectorAll(".radio")).forEach(function(r, k){
+          r.classList.toggle("on", k === i);
+          var radio = r.querySelector("input");
+          if (radio) radio.checked = (k === i);
         });
+      };
+      box.onchange = function(ev){
+        if (ev.target.name !== "sug") return;
+        choose(+ev.target.value);
         m.className = "msg ok"; m.textContent = "已填入（可以直接改）";
-      }, { once: false });
-      m.className = "msg";
-      m.textContent = "按目标「" + (askedFor.length > 18 ? askedFor.slice(0, 18) + "…" : askedFor) + "」· " +
-        (d.source || "") + (d.note ? "　注：" + d.note : "");
+      };
+      // **只有协调者按目标挑出来的才自动填** —— 用户要的是「说完目标，判据命令就出来了」。
+      // 而「按仓库文件猜的」那半与目标无关,自动填进去等于悄悄拿一条不相干的命令当 judge:
+      // 它长得跟贴题候选一模一样,用户不会知道这条是猜的。留空由他自己挑。
+      if (byCoord.length && (!str("cmd") || wasAuto)) { choose(0); wasAuto = true; }
+      if (byCoord.length) {
+        m.className = "msg";
+        m.textContent = "按目标「" + (askedFor.length > 14 ? askedFor.slice(0, 14) + "…" : askedFor) +
+          "」出的" + (byCoord.length > 1 ? "，共 " + byCoord.length + " 条可挑" : "") +
+          (d.note ? "　注：" + d.note : "");
+      } else {
+        // 协调者没给出贴题候选。这件事必须显眼地说 ——
+        // 静默把下面那几条猜的呈现成「按目标出的」,是这一版要修的原始 bug。
+        // ⚠ 「它看过说没有」与「它压根没跑完」要分开:超时报成「这仓库没有相关检查」
+        //    会让人去改判据,而实际该做的是重取或自己填。
+        m.className = "msg err";
+        m.textContent = d.error
+          ? "协调者没跑完：" + d.error + "　它没看完项目，下面这些不是按目标挑的"
+          : "协调者看过项目，说没找到跟这个目标相关的检查命令" +
+            (d.note ? "：" + d.note : "") + "　下面这些是按仓库文件猜的，请自己确认或改写";
+      }
     }
   } catch (err) {
     m.className = "msg err"; m.textContent = "取候选失败：" + err.message;
   }
+  inflight = false;
   btn.disabled = false;
-});
+  syncSuggestGate();
+}
+$("suggest").addEventListener("click", fetchSuggestions);
 
 $("genPrompt").addEventListener("click", async function(){
   var d = await (await fetch("/agent/prompt", { method:"POST", headers:{"content-type":"application/json"},

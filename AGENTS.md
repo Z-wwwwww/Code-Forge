@@ -18,7 +18,7 @@ Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自
 | `agents/forge-*.md` 三个角色(各绑模型与工具集) | ❌ | Claude Code 的 subagent 格式 |
 | `/code-forge` 斜杠命令、`install.js`、插件清单 | ❌ | Claude Code 的目录约定 |
 | 页面 **Run** / `tui` **自动把执行者拉起来** | ⚠️ | 默认起 `claude`;`CODE_FORGE_AGENT_CLI` 能换成别的 agent 命令行,**但 `-p` / `--output-format stream-json` / `--allowedTools` 是 claude 专属参数** —— 换了以后这条路的参数要自己对 |
-| `/setup` 页上「让协调者建议判据」 | ⚠️ | 同上走本地 `claude -p`;**失败自动退回零调用的文件启发式**(pytest.ini、package.json 的 scripts、Cargo.toml…),那半是通用的 |
+| `/setup` 页上「让协调者建议判据」 | ⚠️ | 同上走本地 `claude -p`;**失败自动退回零调用的文件启发式**(pytest.ini、package.json 的 scripts、Cargo.toml…),那半是通用的。⚠ 退回来的那批**与目标无关**,页面与 tui 都按来源分拨、只有贴题候选才自动填 —— 把猜的呈现成「按目标出的」等于拿一条不相干的命令当 judge |
 
 一句话:**回环本身、判定、留痕、直播都是通用的;只有「自动把执行者拉起来」这一件事目前对
 Claude Code 开箱即用。** 其它宿主走「你自己驱动」那条路 —— 接上 MCP、照下面的协议走,效果一样。

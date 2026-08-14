@@ -405,7 +405,12 @@ async function testPackaging() {
 
   // 页面上那道闸:按钮默认 disabled、目标变了标脏、目标清空无条件收掉候选
   const setupHtml = fs.readFileSync(path.join(__dirname, "setup.html"), "utf8");
-  assert.ok(/id="suggest"[^>]*disabled/.test(setupHtml), "建议按钮默认必须是 disabled");
+  // 「重新取」按钮默认藏着:目标没确立、或还没取过候选时,它没有任何可做的事。
+  // (更早那版是 disabled;改成 hide 之后这条断言要跟着改 —— 闸变了,钉子也得钉在新闸上)
+  assert.ok(/id="suggest"[^>]*class="[^"]*\bhide\b|class="[^"]*\bhide\b[^"]*"[^>]*id="suggest"/.test(setupHtml),
+    "「重新取」按钮默认必须是隐藏的");
+  assert.ok(/toggle\("hide", !ok \|\| sugTask === null\)/.test(setupHtml),
+    "只有目标确立且取过候选之后才许露出「重新取」");
   assert.ok(/sugTask !== str\("task"\)/.test(setupHtml), "目标改了要能看出候选过期");
   assert.ok(/目标改了/.test(setupHtml), "过期要有人话提示");
   assert.ok(setupHtml.indexOf("① 目标") >= 0 && setupHtml.indexOf("② 判据") >= 0,
@@ -426,6 +431,40 @@ async function testPackaging() {
   assert.ok(qTask >= 0 && qSuggest > qTask, "向导必须先问目标再取候选");
   assert.ok(/while \(!gsug\.taskEstablished\(task\)\)/.test(tsrc0), "目标太短要重问");
   ok("向导：先问目标（太短重问），之后才按目标取候选");
+
+  // ★ 协调者「没给出贴题候选」与「给了」在界面上必须长得不一样。
+  //   原始 bug:协调者读了 47s、正确地判定这仓库没有相关检查并写在 note 里回了空候选,
+  //   而两侧都静默退回文件启发式(`npm run test`),还把它当候选 1 / 自动填进判据 ——
+  //   于是一条**与目标毫无关系**的命令成了 judge,用户无从看出。
+  //   两侧都按来源分拨:贴题的才自动选,猜的必须标明「与目标无关」。
+  for (const [src, name] of [[tsrc0, "tui"], [setupHtml, "页面"]]) {
+    assert.ok(/from === "协调者"/.test(src), name + "：必须按来源(协调者/启发式)分拨候选");
+    assert.ok(/与目标无关/.test(src), name + "：猜的那批必须标明与目标无关");
+    assert.ok(/没找到跟这个目标相关的检查命令|说没有跟这个目标相关的检查命令/.test(src),
+      name + "：协调者交白卷必须显眼地说出来");
+    // 「它看过说没有」与「它压根没跑完」是两个不同的原因。报错原因必须是真的响了那一条 ——
+    // 超时报成「这仓库没有相关检查」会让人去改判据,而实际该做的是重取或自己填。
+    assert.ok(/没跑完/.test(src), name + "：超时/报错要与「看过说没有」分开报");
+  }
+  // 没有贴题候选时,默认值/自动填都不许落在「猜的」那条上
+  assert.ok(/byCoord\.length \? "1" : "0"/.test(tsrc0), "tui：没有贴题候选时默认必须是「自己填」");
+  assert.ok(/if \(byCoord\.length && \(!str\("cmd"\) \|\| wasAuto\)\)/.test(setupHtml),
+    "页面：只有贴题候选才许自动填进判据命令");
+  // 等待要报时间(那次调用真要 40~60s,不报时间会被当成卡死),且残字要整行清掉
+  assert.ok(/读项目中…/.test(tsrc0) && /Date\.now\(\) - t0/.test(tsrc0), "tui：等协调者时要报已用秒数");
+  assert.ok(/\\x1b\[2K\\r/.test(tsrc0), "tui：清 spinner 要整行清（留残字会看起来像两问一起出）");
+  // 交白卷时 note 是它给出的**全部**理由 —— 折行,不许截断
+  const tuiMod = require("./tui.js");
+  const longNote = "当前仓库 code-forge 是对抗回环工具本身，不含支付相关代码。" +
+    "package.json 里的 npm test 只测这个框架自己的事件流与判据逻辑，跑绿也说明不了支付回调修好了。";
+  const wrapped = tuiMod.wrapText(longNote, 40, "   ");
+  assert.ok(wrapped.length > 2, "长 note 要折成多行");
+  const strip = function (s) { return s.replace(/\s+/g, ""); };
+  assert.strictEqual(strip(wrapped.join("")), strip(longNote),
+    "折行不许丢字（交白卷时这段话是唯一的理由）");
+  assert.ok(wrapped.every(function (l) { return tuiMod.dispWidth(l) <= 43; }), "每行不许超宽");
+  assert.ok(!/它说：" \+ clip\(/.test(tsrc0), "交白卷的 note 不许再用 clip 截断");
+  ok("★ 协调者交白卷 ≠ 有贴题候选：两侧分拨来源、不自动填猜的、等待报时间、理由折行不截断");
 
   // 提议者用的是只读工具:它的活是看一眼然后提议,不是动手
   const gsrc = fs.readFileSync(path.join(__dirname, "gatesuggest.js"), "utf8");

@@ -166,6 +166,24 @@ function pad(s, n) {
   const c = clip(s, n);
   return c + " ".repeat(Math.max(0, n - dispWidth(c)));
 }
+/**
+ * 折行而不是截断。**只用在「这段话本身就是唯一的信息」的地方** ——
+ * 协调者交白卷时,note 是它给出的全部理由,截掉一半等于把原因藏起来。
+ * 表格列仍然用 clip(截断)：那里错的是布局,不是信息。
+ */
+function wrapText(s, width, indent) {
+  s = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  if (!s) return [];
+  const lines = [];
+  let cur = "", w = 0;
+  for (const ch of s) {
+    const cw = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1;
+    if (w + cw > width) { lines.push(cur); cur = ""; w = 0; }
+    cur += ch; w += cw;
+  }
+  if (cur) lines.push(cur);
+  return lines.map(function (l, i) { return (i === 0 ? "" : (indent || "")) + l; });
+}
 
 function render(st, width) {
   const W = Math.max(60, Math.min(width || 100, 120));
@@ -378,43 +396,80 @@ async function wizard(rl) {
   let cmd = "";
   let metric = null;
   console.log("");
-  console.log(C.dim("③ 判据命令 —— 按目标「") + clip(task, 40) + C.dim("」找候选…"));
-  process.stdout.write(C.dim("   正在看项目（只读，最多 60s）…"));
-  let sug = { candidates: [] };
-  try { sug = await gsug.suggest({ task: task, cwd: cwd, timeoutMs: 60000 }); }
-  catch (e) { sug = { candidates: [], error: e.message }; }
-  process.stdout.write("\r" + " ".repeat(46) + "\r");
+  console.log(C.dim("③ 判据命令 —— 让协调者按目标「") + clip(task, 34) + C.dim("」看一眼项目"));
 
-  if (sug.candidates.length) {
-    console.log(C.dim("   候选（" + (sug.source || "") + "，按可信度排）："));
-    sug.candidates.forEach(function (c, i) {
-      console.log("  " + (i + 1) + ") " + C.bold(c.command) +
-        (c.why ? C.dim("  — " + clip(c.why, 56)) : "") +
-        (c.metric ? C.dim("  [带指标 " + c.metric.name + "]") : ""));
-    });
-    if (sug.note) console.log(C.dim("  注：" + clip(sug.note, 80)));
-    console.log(C.dim("  0) 自己填 / 直接把命令打进来也行"));
-    const pick = await ask(rl, "判据命令", "1");
+  // 这一步真要几十秒(它在读仓库)。不报时间的等待会被当成卡死。
+  const t0 = Date.now();
+  const tick = TTY ? setInterval(function () {
+    process.stdout.write("\x1b[2K\r" + C.dim("   读项目中… " + Math.round((Date.now() - t0) / 1000) + "s"));
+  }, 500) : null;
+  let sug = { candidates: [] };
+  try { sug = await gsug.suggest({ task: task, cwd: cwd, timeoutMs: 90000 }); }
+  catch (e) { sug = { candidates: [], error: e.message }; }
+  if (tick) { clearInterval(tick); process.stdout.write("\x1b[2K\r"); }   // 整行清掉,别留残字
+
+  // 分两拨:协调者按**你的目标**挑的,与「只是按仓库文件猜的」——后者与目标无关,不能混在一起排号。
+  const byCoord = sug.candidates.filter(function (c) { return c.from === "协调者"; });
+  const byFile = sug.candidates.filter(function (c) { return c.from !== "协调者"; });
+  const ordered = byCoord.concat(byFile);
+
+  if (!byCoord.length) {
+    // 协调者没给出与目标相关的命令。这件事必须显眼地说 ——
+    // 静默退回「按文件猜的那条」等于把一条跟目标无关的命令当成judge。
+    // ⚠ 两种「没有」必须分开报:**它看过之后说没有**(有 note),与**它压根没跑完**(超时/报错)。
+    //   混成一句会指向一个不存在的原因 —— 超时报成「这仓库没有相关检查」会让人去改判据,
+    //   而实际该做的是再试一次或自己填。
+    if (sug.error) {
+      console.log(C.yellow("   协调者没跑完：" + clip(sug.error, 60) + "　—— 它没看完项目,下面这些不是按目标挑的。"));
+    } else {
+      console.log(C.yellow("   协调者看过项目，说没有跟这个目标相关的检查命令。"));
+    }
+    // note 是它给出的**全部**理由,这里折行不截断
+    if (sug.note) {
+      const w = Math.max(40, (process.stdout.columns || 80) - 10);
+      wrapText("它说：" + sug.note, w, "   ").forEach(function (l, i) {
+        console.log(C.dim((i === 0 ? "   " : "") + l));
+      });
+    }
+  }
+  if (ordered.length) {
+    if (byCoord.length) {
+      console.log(C.dim("   按你的目标挑的："));
+      byCoord.forEach(function (c, i) {
+        console.log("   " + (i + 1) + ") " + C.bold(c.command) +
+          (c.why ? C.dim("  — " + clip(c.why, 52)) : "") +
+          (c.metric ? C.dim("  [带指标 " + c.metric.name + "]") : ""));
+      });
+    }
+    if (byFile.length) {
+      console.log(C.dim("   " + (byCoord.length ? "以下与目标无关，" : "") + "只是按仓库文件猜的："));
+      byFile.forEach(function (c, i) {
+        console.log("   " + (byCoord.length + i + 1) + ") " + c.command + C.dim("  — " + clip(c.why, 46)));
+      });
+    }
+    console.log(C.dim("   0) 自己填 / 直接把命令打进来也行"));
+    // 没有贴题候选时默认给 0 —— 不许把一条与目标无关的命令设成默认值
+    const dflt = byCoord.length ? "1" : "0";
+    const pick = await ask(rl, "   判据命令", dflt);
     const n = Number(pick);
-    if (!isNaN(n) && n >= 1 && n <= sug.candidates.length) {
-      const chosen = sug.candidates[n - 1];
+    if (!isNaN(n) && n >= 1 && n <= ordered.length) {
+      const chosen = ordered[n - 1];
       cmd = chosen.command;
       metric = chosen.metric || null;
-      console.log(C.dim("  用 " + cmd + (metric ? "（指标 " + metric.name + "）" : "")));
+      console.log(C.dim("   用 " + cmd + (metric ? "（指标 " + metric.name + "）" : "")));
     } else if (pick === "0" || pick === "") {
-      cmd = await ask(rl, "  自己填（留空=判不出达标）", "");
+      cmd = await ask(rl, "   自己填（留空=这次判不出达标）", "");
     } else {
       cmd = pick;   // 不是号码就当成命令本身 —— 想直接打的人不该被逼着先选 0
     }
   } else {
-    if (sug.error) console.log(C.dim("协调者没能给出候选（" + clip(sug.error, 60) + "），自己填："));
-    if (sug.note) console.log(C.dim("注：" + clip(sug.note, 80)));
-    cmd = await ask(rl, "判据命令（能跑的那条，留空=判不出达标）", "");
+    if (sug.error) console.log(C.dim("   （" + clip(sug.error, 70) + "）"));
+    cmd = await ask(rl, "   判据命令（能跑的那条，留空=判不出达标）", "");
   }
 
-  // 候选自带指标就不必再问;否则给机会配一个
+  // 候选自带指标就不必再问;否则给一次机会配(留空直接跳过后面三问)
   if (cmd && !metric) {
-    const pattern = await ask(rl, "指标正则（留空=只看退出码）", "");
+    const pattern = await ask(rl, "④ 要不要卡一个指标？填抓取正则，留空=只看退出码", "");
     if (pattern) {
       const name = await ask(rl, "  指标名", "指标");
       const min = await ask(rl, "  需 ≥（留空跳过）", "");
@@ -501,7 +556,8 @@ async function main(argv) {
 }
 
 module.exports = { main: main, render: render, reduce: reduce, newState: newState, wizard: wizard,
-  watch: watch, discoverBase: discoverBase, ROLE_PRESETS: ROLE_PRESETS, PERMS: PERMS };
+  watch: watch, discoverBase: discoverBase, ROLE_PRESETS: ROLE_PRESETS, PERMS: PERMS,
+  wrapText: wrapText, clip: clip, dispWidth: dispWidth };
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch(function (e) {
