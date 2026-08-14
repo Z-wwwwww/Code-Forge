@@ -11,7 +11,7 @@ Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自
   ```toml
   [mcp_servers.code-forge]
   command = "node"
-  args = ["C:/Projects_GitHub_my/Code-Forge/server.js", "--mcp"]
+  args = ["C:/Projects_GitHub_my/code-forge/server.js", "--mcp"]
   ```
 - **opencode**:在 `opencode.json` 的 `mcp` 段里加同样的 command/args(`"type": "local"`)。
 - **任何支持 stdio MCP 的宿主**:同上,把 command 与 args 填进它的 MCP 配置。

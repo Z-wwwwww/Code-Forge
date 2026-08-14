@@ -1,4 +1,4 @@
-# Code-Forge
+# code-forge
 
 **对抗回环插件**:一个角色提方案、一个角色专门推翻它、由**代码**跑判据裁定,不达标就带着失败信息再来一轮 ——
 全过程实时直播到本地监控台网页。
@@ -6,7 +6,7 @@
 **执行者是你的 coding agent 自己**(Claude Code / Codex / opencode …)。它已经有模型访问权,
 所以**不需要配任何 API key**,也不产生额外的模型账单。
 
-**这个目录暂不进 git**(没有 `git init`,是刻意的)。
+仓库:<https://github.com/Z-wwwwww/Code-Forge>（本地目录 `code-forge`,命令与包名同为小写 `code-forge`）。
 
 ## 装:一条命令
 
@@ -31,7 +31,7 @@ MCP: claude mcp add --scope user code-forge
 **或者走插件那条路**(想让 `/plugin` 管版本时):
 
 ```
-/plugin marketplace add C:\Projects_GitHub_my\Code-Forge
+/plugin marketplace add C:\Projects_GitHub_my\code-forge
 /plugin install code-forge@code-forge
 ```
 
@@ -72,7 +72,7 @@ loop_begin  → 开局，浏览器弹出监控台
 **反驳者没有写权限,这是工具层面的硬约束** —— 一个能顺手把问题抹平的反驳者等于没有反驳者。
 上一版这条只写在提示词里,现在结构上就做不到了。
 
-想换模型就改 `~/.claude/agents/adv-*.md` 里的 `model:` 那一行(`opus` / `sonnet` / `haiku` / `fable`)。
+想换模型就改 `~/.claude/agents/forge-*.md` 里的 `model:` 那一行(`opus` / `sonnet` / `haiku` / `fable`)。
 想要更强的反驳,同一轮可以派多个 `forge-critic`、各给一个攻击面(并发 / 边界 / 入口覆盖)。
 
 **跨厂商同场**(gpt / gemini 一起上)才需要 API key —— 那是下面的可选本地模式。
@@ -128,7 +128,7 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 32 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
+node test-host.js    # 38 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
 node test.js         # 28 项：本地驱动模式（可选）
 ```
 
