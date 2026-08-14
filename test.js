@@ -226,7 +226,7 @@ async function testCancelBilling() {
 /* ---------------- HTTP:起/停 ---------------- */
 function testHttp() {
   console.log("server — /runs 与 /runs/stop");
-  const logFile = path.join(os.tmpdir(), "ac-test-" + process.pid + ".jsonl");
+  const logFile = path.join(os.tmpdir(), "cf-test-" + process.pid + ".jsonl");
   const port = 4771;
   const child = spawn(process.execPath,
     [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(port)],

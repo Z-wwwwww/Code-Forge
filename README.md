@@ -1,4 +1,4 @@
-# adversarial-console
+# Code-Forge
 
 **对抗回环插件**:一个角色提方案、一个角色专门推翻它、由**代码**跑判据裁定,不达标就带着失败信息再来一轮 ——
 全过程实时直播到本地监控台网页。
@@ -19,20 +19,20 @@ node install.js --uninstall # 卸
 装进的都是**受支持的用户级配置**,重开一个 Claude Code 会话即生效:
 
 ```
-~/.claude/skills/adversarial-loop/SKILL.md   技能（自动触发）
-~/.claude/agents/adv-proposer|critic|reviewer.md   三个角色，各绑不同模型
-~/.claude/commands/adversarial-loop.md       /adversarial-loop 斜杠命令
-MCP: claude mcp add --scope user adversarial-console
+~/.claude/skills/code-forge/SKILL.md   技能（自动触发）
+~/.claude/agents/forge-proposer|critic|reviewer.md   三个角色，各绑不同模型
+~/.claude/commands/code-forge.md       /code-forge 斜杠命令
+MCP: claude mcp add --scope user code-forge
 ```
 
 它**刻意不动** `~/.claude/plugins/*.json`(插件管理器的内部账本)—— 手改那些会把 `/plugin` 弄坏。
-改 `~/.claude.json` 之前会先备份成 `.bak-adversarial`。
+改 `~/.claude.json` 之前会先备份成 `.bak-code-forge`。
 
 **或者走插件那条路**(想让 `/plugin` 管版本时):
 
 ```
-/plugin marketplace add C:\Projects_GitHub_my\adversarial-console
-/plugin install adversarial-console@adversarial-console
+/plugin marketplace add C:\Projects_GitHub_my\Code-Forge
+/plugin install code-forge@code-forge
 ```
 
 两条路等价,别同时用(会装两份技能)。其它宿主(Codex / opencode / 任何支持 stdio MCP 的)
@@ -41,7 +41,7 @@ MCP: claude mcp add --scope user adversarial-console
 ## 用
 
 ```
-/adversarial-loop 把 payments/webhook 的重复回调修掉，pytest 全绿且覆盖率 ≥ 80%
+/code-forge 把 payments/webhook 的重复回调修掉，pytest 全绿且覆盖率 ≥ 80%
 ```
 
 或者直接说人话:「对抗一下」「让它俩吵一架直到测试通过」「盯着改到绿」—— 技能的触发词覆盖了这些。
@@ -65,15 +65,15 @@ loop_begin  → 开局，浏览器弹出监控台
 
 | 角色 | 子 agent | 模型 | 工具 |
 |---|---|---|---|
-| 提议者 | `adv-proposer` | `sonnet` | 读写 + Bash |
-| 反驳者 | `adv-critic` | `opus` | **只有 Read/Grep/Glob** |
-| 复核者 | `adv-reviewer` | `sonnet` | 只读 |
+| 提议者 | `forge-proposer` | `sonnet` | 读写 + Bash |
+| 反驳者 | `forge-critic` | `opus` | **只有 Read/Grep/Glob** |
+| 复核者 | `forge-reviewer` | `sonnet` | 只读 |
 
 **反驳者没有写权限,这是工具层面的硬约束** —— 一个能顺手把问题抹平的反驳者等于没有反驳者。
 上一版这条只写在提示词里,现在结构上就做不到了。
 
 想换模型就改 `~/.claude/agents/adv-*.md` 里的 `model:` 那一行(`opus` / `sonnet` / `haiku` / `fable`)。
-想要更强的反驳,同一轮可以派多个 `adv-critic`、各给一个攻击面(并发 / 边界 / 入口覆盖)。
+想要更强的反驳,同一轮可以派多个 `forge-critic`、各给一个攻击面(并发 / 边界 / 入口覆盖)。
 
 **跨厂商同场**(gpt / gemini 一起上)才需要 API key —— 那是下面的可选本地模式。
 
@@ -86,7 +86,7 @@ loop_begin  → 开局，浏览器弹出监控台
 | 「达标了吗」 | `loop_gate`:跑你给的命令,看退出码 +(可选)一个指标数 | `loop_end(goal_met)` 在 gate 没真判过之前**直接被拒**,并告诉它去调 gate |
 | 「还能不能继续」 | 代码:轮数 / 时限 / 连续无进展 | `loop_gate` 回 `continue:false`,技能里明写必须停手 |
 
-配套的三条纪律写在 `skills/adversarial-loop/SKILL.md` 里(**提示词先禁,代码再兜底** —— 只靠代码拒绝
+配套的三条纪律写在 `skills/code-forge/SKILL.md` 里(**提示词先禁,代码再兜底** —— 只靠代码拒绝
 等于让 agent 每次都去撞一次墙):
 
 1. 不许自行宣布达标。
@@ -117,7 +117,7 @@ loop_begin  → 开局，浏览器弹出监控台
 不想让宿主执行、想给每个角色配不同的模型并逐角色数 token 时用它。这不是默认路径:
 
 ```
-adversarial-console            # 起监控台
+code-forge            # 起监控台
 # 打开 http://localhost:4610/setup 配角色（provider + 模型）→ 启动
 ```
 
@@ -139,9 +139,9 @@ node test.js         # 28 项：本地驱动模式（可选）
 
 ```
 install.js                         一条命令接入 Claude Code（幂等 / --dry-run / --uninstall）
-skills/adversarial-loop/SKILL.md   技能：协议 + 三条纪律（给 agent 读的那份）
-agents/adv-proposer|critic|reviewer.md  三个角色，各绑不同模型与工具集
-commands/adversarial-loop.toml     /adversarial-loop 斜杠命令（插件版）
+skills/code-forge/SKILL.md   技能：协议 + 三条纪律（给 agent 读的那份）
+agents/forge-proposer|critic|reviewer.md  三个角色，各绑不同模型与工具集
+commands/code-forge.toml     /code-forge 斜杠命令（插件版）
 .claude-plugin/                    插件与 marketplace 清单（自带 MCP 声明）
 AGENTS.md                          Codex / opencode / 纯 HTTP 的接法
 
@@ -154,7 +154,7 @@ setup.html    本地驱动模式的配置页
 
 loop.js       本地驱动（可选）：自带 key 时的回环驱动
 providers.js  本地驱动（可选）：mock / anthropic / OpenAI 兼容各家
-demo.js       示例回环 → 事件流（adversarial-console --demo --live）
+demo.js       示例回环 → 事件流（code-forge --demo --live）
 design/       Claude Design 原始设计稿（provenance，别直接改）
 run.jsonl     运行产物（已 gitignore）
 ```

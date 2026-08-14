@@ -775,7 +775,7 @@ function renderEmpty(){
         "喂第一条进去就会立刻出现在这里。</p>" +
         '<p><a class="expandall" href="/setup" style="display:inline-block">配置并启动一次回环 →</a>' +
         ' <span class="dim" style="margin-left:8px">加角色、定目的、设预算</span></p>' +
-        "<pre>adversarial-console --demo --live   # 或先看一遍示例回环\n\n" +
+        "<pre>code-forge --demo --live   # 或先看一遍示例回环\n\n" +
         "curl -X POST localhost:" + esc(port) + "/events \\\n" +
         "  -H 'content-type: application/json' \\\n" +
         '  -d \'{"t":"run.start","session":"我的回环"}\'</pre>' +

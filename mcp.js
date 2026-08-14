@@ -147,7 +147,7 @@ function serve(opts) {
   let consoleChild = null;
   let buf = "";
 
-  function log(s) { process.stderr.write("[adversarial-console] " + s + "\n"); }
+  function log(s) { process.stderr.write("[code-forge] " + s + "\n"); }
   function send(msg) { process.stdout.write(JSON.stringify(msg) + "\n"); }
   function ok(id, result) { send({ jsonrpc: "2.0", id: id, result: result }); }
   function failRpc(id, code, message) { send({ jsonrpc: "2.0", id: id, error: { code: code, message: message } }); }
@@ -210,7 +210,7 @@ function serve(opts) {
       if (name === "loop_begin") {
         const up = await ensureConsole();
         if (!up) {
-          return reply(id, "起不了监控台。手动跑一次 `adversarial-console` 再重试;" +
+          return reply(id, "起不了监控台。手动跑一次 `code-forge` 再重试;" +
             "或用 --url 指向已经在跑的那个。", true);
         }
         const r = await post("/host/begin", args);
@@ -237,7 +237,7 @@ function serve(opts) {
       return failRpc(id, -32601, "未知工具：" + name);
     } catch (err) {
       return reply(id, "调用失败：" + err.message +
-        "\n（监控台在跑吗？先执行 adversarial-console,或用 --url 指定端口）", true);
+        "\n（监控台在跑吗？先执行 code-forge,或用 --url 指定端口）", true);
     }
   }
 
@@ -246,7 +246,7 @@ function serve(opts) {
       return ok(msg.id, {
         protocolVersion: (msg.params && msg.params.protocolVersion) || "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "adversarial-console", version: "0.2.0" }
+        serverInfo: { name: "code-forge", version: "0.2.0" }
       });
     }
     if (msg.method === "notifications/initialized" || msg.method === "notifications/cancelled") return;

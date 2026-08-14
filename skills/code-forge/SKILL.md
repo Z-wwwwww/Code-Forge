@@ -1,5 +1,5 @@
 ---
-name: adversarial-loop
+name: code-forge
 description: >
   在一个可验证的目标上跑对抗回环:一个角色提方案、一个角色专门推翻它、由代码跑判据裁定,
   不达标就带着失败信息再来一轮,直到代码判过或预算到顶。全过程直播到本地监控台网页
@@ -43,20 +43,20 @@ description: >
 
 | 角色 | 子 agent | 模型 | 工具 | kind |
 |---|---|---|---|---|
-| 提议者 | `adv-proposer` | `sonnet` | 读写 + Bash | `propose` |
-| 反驳者 | `adv-critic` | `opus` | **只有 Read/Grep/Glob** | `attack` |
-| 复核者 | `adv-reviewer` | `sonnet` | 只读 | `audit` |
+| 提议者 | `forge-proposer` | `sonnet` | 读写 + Bash | `propose` |
+| 反驳者 | `forge-critic` | `opus` | **只有 Read/Grep/Glob** | `attack` |
+| 复核者 | `forge-reviewer` | `sonnet` | 只读 | `audit` |
 
 **反驳者没有写权限,这是工具层面的硬约束,不是提示词里的请求。** 一个能顺手把问题抹平的反驳者
 等于没有反驳者;它的产物必须是「哪一行、什么触发路径」,由提议者去改。
 
 派发方式(Claude Code):用 Task/Agent 工具,`subagent_type` 填上面那三个名字。
 同一轮里提议者与反驳者若互不依赖,**放在同一条消息里并发派**,拿回结果后各自 `loop_say`。
-需要更强的反驳时,可以同一轮派多个 `adv-critic`,给不同的攻击面(并发 / 边界 / 入口覆盖),
+需要更强的反驳时,可以同一轮派多个 `forge-critic`,给不同的攻击面(并发 / 边界 / 入口覆盖),
 再把它们的结论合并成一条 `loop_say`。
 
 **宿主不支持子 agent 时**(部分 CLI):退化成你自己按角色轮流发言 —— 那也能跑,但要清楚
-反驳强度会降一档;此时更要严格按 `adv-critic` 那份职责去找反例,而不是走过场。
+反驳强度会降一档;此时更要严格按 `forge-critic` 那份职责去找反例,而不是走过场。
 
 需要时加更多档位:`test`(补用例)、`patch`(落地改动)、`defend`(被驳后辩护)、`audit`(安全/性能专项)。
 

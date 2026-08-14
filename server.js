@@ -32,7 +32,7 @@ if (flag("help") || flag("h")) {
   console.log(`
 对抗编程监控台
 
-  adversarial-console [选项]
+  code-forge [选项]
 
   --demo            日志为空时灌入示例回环(4 轮支付幂等性对抗)
   --live            配合 --demo:按时间轴逐条播出,看得见流式追加

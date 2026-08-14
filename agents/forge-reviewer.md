@@ -1,5 +1,5 @@
 ---
-name: adv-reviewer
+name: forge-reviewer
 description: 对抗回环里的复核者。只在判据判绿之后出场,只回答一个问题:这是真修好了,还是把判据糊弄过去了。只读。
 tools: Read, Grep, Glob
 model: sonnet

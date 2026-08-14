@@ -1,4 +1,4 @@
-# adversarial-console — 给 Codex / opencode / 其它 agent 的接入说明
+# code-forge — 给 Codex / opencode / 其它 agent 的接入说明
 
 Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自动加载)。
 其它宿主目前没有统一的技能格式,所以这里给两样东西:**怎么把 MCP 接上**、**照什么协议走**。
@@ -9,9 +9,9 @@ Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自
 
 - **Codex**:在 `~/.codex/config.toml` 里加
   ```toml
-  [mcp_servers.adversarial-console]
+  [mcp_servers.code-forge]
   command = "node"
-  args = ["C:/Projects_GitHub_my/adversarial-console/server.js", "--mcp"]
+  args = ["C:/Projects_GitHub_my/Code-Forge/server.js", "--mcp"]
   ```
 - **opencode**:在 `opencode.json` 的 `mcp` 段里加同样的 command/args(`"type": "local"`)。
 - **任何支持 stdio MCP 的宿主**:同上,把 command 与 args 填进它的 MCP 配置。
@@ -21,7 +21,7 @@ Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自
 
 ## 2. 协议
 
-完整版在 `skills/adversarial-loop/SKILL.md` —— 那份是给 agent 读的,内容与宿主无关,
+完整版在 `skills/code-forge/SKILL.md` —— 那份是给 agent 读的,内容与宿主无关,
 Codex / opencode 也可以直接把它贴进自己的 rules/AGENTS.md 或让 agent 读一遍。
 
 摘要:

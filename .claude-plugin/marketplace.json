@@ -1,11 +1,11 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "adversarial-console",
+  "name": "code-forge",
   "description": "对抗回环 + 本地监控台。一个角色提方案,一个专门推翻它,判定权交给代码。",
   "owner": { "name": "zhangwen" },
   "plugins": [
     {
-      "name": "adversarial-console",
+      "name": "code-forge",
       "description": "在可验证的目标上跑对抗回环,过程实时直播到网页。宿主自己出模型,不需要任何 API key。",
       "source": "./",
       "category": "productivity"

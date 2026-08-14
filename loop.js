@@ -70,7 +70,7 @@ function start(config, append) {
   append({
     t: "run.start",
     session: cfg.session, repo: cfg.repo || "", branch: cfg.branch || "",
-    client: cfg.client || "adversarial-console", version: cfg.version || "v0.1",
+    client: cfg.client || "code-forge", version: cfg.version || "v0.1",
     goal: [cfg.goal.command, cfg.goal.metric && cfg.goal.metric.name
       ? cfg.goal.metric.name + " ≥ " + cfg.goal.metric.min : null].filter(Boolean).join(" 且 ") || "(未配置判据)",
     budget: { tokens: cfg.budget.tokens, seconds: cfg.budget.seconds, rounds: cfg.budget.rounds }

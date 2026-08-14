@@ -1,5 +1,5 @@
 ---
-name: adv-proposer
+name: forge-proposer
 description: 对抗回环里的提议者。读代码、提出最小侵入的改法并落地,然后把改了什么如实报回来。只追求过判据,不追求漂亮。
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet

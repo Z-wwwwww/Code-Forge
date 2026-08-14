@@ -8,9 +8,9 @@
  *   node install.js --dry-run    只看会动哪些文件
  *
  * 走的全是**受支持的用户级配置**:
- *   ~/.claude/skills/adversarial-loop/SKILL.md   技能
+ *   ~/.claude/skills/code-forge/SKILL.md   技能
  *   ~/.claude/agents/adv-*.md                    三个角色(各绑不同模型)
- *   ~/.claude/commands/adversarial-loop.md       /adversarial-loop 斜杠命令
+ *   ~/.claude/commands/code-forge.md       /code-forge 斜杠命令
  *   MCP:优先 `claude mcp add --scope user`,没有 CLI 就写 ~/.claude.json 的 mcpServers
  *
  * ⚠ 刻意**不动** ~/.claude/plugins/*.json（installed_plugins / known_marketplaces）——
@@ -25,7 +25,7 @@ const { execFileSync } = require("child_process");
 const HERE = __dirname;
 const HOME = os.homedir();
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(HOME, ".claude");
-const MCP_NAME = "adversarial-console";
+const MCP_NAME = "code-forge";
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes("--" + f);
@@ -54,15 +54,24 @@ function removeFile(dest) {
   if (DRY) { say("  [dry] 删 " + rel(dest)); return; }
   fs.unlinkSync(dest);
   done.push("删 " + rel(dest));
+  // 技能是「一个目录一个技能」,删了文件留下空目录会让人以为它还在。
+  // 只删空的、且只删我们自己建的那一层(不往上爬到 ~/.claude/skills 本身)。
+  const dir = path.dirname(dest);
+  const guard = path.join(CLAUDE_DIR, "skills");
+  if (dir !== guard && dir.startsWith(guard)) {
+    try {
+      if (fs.readdirSync(dir).length === 0) { fs.rmdirSync(dir); done.push("删 " + rel(dir) + "（空目录）"); }
+    } catch (_) {}
+  }
 }
 
 /* ---------------- 技能 / 角色 / 命令 ---------------- */
-const SKILL_SRC = path.join(HERE, "skills", "adversarial-loop", "SKILL.md");
-const SKILL_DEST = path.join(CLAUDE_DIR, "skills", "adversarial-loop", "SKILL.md");
+const SKILL_SRC = path.join(HERE, "skills", "code-forge", "SKILL.md");
+const SKILL_DEST = path.join(CLAUDE_DIR, "skills", "code-forge", "SKILL.md");
 const AGENT_FILES = fs.existsSync(path.join(HERE, "agents"))
   ? fs.readdirSync(path.join(HERE, "agents")).filter((f) => f.endsWith(".md"))
   : [];
-const CMD_DEST = path.join(CLAUDE_DIR, "commands", "adversarial-loop.md");
+const CMD_DEST = path.join(CLAUDE_DIR, "commands", "code-forge.md");
 
 // 斜杠命令用户级是 markdown + frontmatter（插件里那份是 .toml，两种格式各自的地盘）
 function commandMarkdown() {
@@ -72,10 +81,10 @@ function commandMarkdown() {
     "argument-hint: \"<目标，例如：把 payments 的重复回调修掉，pytest 全绿且覆盖率 ≥ 80%>\"",
     "---",
     "",
-    "用 adversarial-loop 技能在这个目标上跑一次对抗回环：$ARGUMENTS",
+    "用 code-forge 技能在这个目标上跑一次对抗回环：$ARGUMENTS",
     "",
     "按技能里的协议走：先确认判据命令（一条现在就能跑、能反映目标的命令；有量的话配上 metric），",
-    "再 loop_begin 开局并把监控台网址告诉我，然后每轮把角色派给 adv-proposer / adv-critic",
+    "再 loop_begin 开局并把监控台网址告诉我，然后每轮把角色派给 forge-proposer / forge-critic",
     "（它们各绑不同模型）、各自 loop_say，一轮结束调 loop_gate。",
     "",
     "记住三条：达标只有 loop_gate 能判；判据不许为了达标而放宽或换掉；",
@@ -141,14 +150,14 @@ function patchClaudeJson() {
   }
   if (DRY) { say("  [dry] 改 ~/.claude.json 的 mcpServers." + MCP_NAME); return true; }
   // 先备份再改 —— 这是别人的主配置文件,不是我们的
-  try { fs.copyFileSync(file, file + ".bak-adversarial"); } catch (_) {}
+  try { fs.copyFileSync(file, file + ".bak-code-forge"); } catch (_) {}
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", "utf8");
   done.push("~/.claude.json 的 mcpServers." + MCP_NAME + (UNINSTALL ? "（已移除）" : ""));
   return true;
 }
 
 /* ---------------- 跑 ---------------- */
-say((UNINSTALL ? "卸载" : "安装") + " adversarial-console → " + rel(CLAUDE_DIR) + (DRY ? "  [dry-run]" : ""));
+say((UNINSTALL ? "卸载" : "安装") + " code-forge → " + rel(CLAUDE_DIR) + (DRY ? "  [dry-run]" : ""));
 say("");
 
 if (UNINSTALL) {
@@ -189,12 +198,12 @@ if (UNINSTALL) {
 } else {
   say("装完了。**重开一个 Claude Code 会话**才会加载,然后:");
   say("");
-  say("  /adversarial-loop 把 xxx 修掉，pytest 全绿且覆盖率 ≥ 80%");
+  say("  /code-forge 把 xxx 修掉，pytest 全绿且覆盖率 ≥ 80%");
   say("");
   say("角色与模型（可在 " + rel(path.join(CLAUDE_DIR, "agents")) + " 里改 model: 那一行）:");
-  say("  adv-proposer  sonnet  读写+Bash   提最小改动并落地");
-  say("  adv-critic    opus    只读        专门找反例（工具层面没有写权限）");
-  say("  adv-reviewer  sonnet  只读        判绿后查是否把判据糊弄过去了");
+  say("  forge-proposer  sonnet  读写+Bash   提最小改动并落地");
+  say("  forge-critic    opus    只读        专门找反例（工具层面没有写权限）");
+  say("  forge-reviewer  sonnet  只读        判绿后查是否把判据糊弄过去了");
   say("");
   say("监控台会在第一次用时自动拉起。不需要任何 API key。");
 }

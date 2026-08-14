@@ -27,8 +27,8 @@ async function testStateMachine() {
   console.log("hostrun — 协议与拒绝");
   const events = [];
   const host = require("./hostrun.js").create(function (e) { events.push(e); });
-  const suite = path.join(os.tmpdir(), "ac-host-suite-" + process.pid + ".js");
-  const covFile = path.join(os.tmpdir(), "ac-host-cov-" + process.pid + ".txt");
+  const suite = path.join(os.tmpdir(), "cf-host-suite-" + process.pid + ".js");
+  const covFile = path.join(os.tmpdir(), "cf-host-cov-" + process.pid + ".txt");
   fs.writeFileSync(suite,
     "const fs=require('fs'),p=" + JSON.stringify(covFile) + ";" +
     "let v=0;try{v=parseInt(fs.readFileSync(p,'utf8'),10)||0}catch(e){}" +
@@ -178,7 +178,7 @@ async function testStops() {
 function testMcpEndToEnd() {
   console.log("mcp — 宿主驱动全链路（真起监控台 + 真走 stdio）");
   const port = 4791;
-  const logFile = path.join(os.tmpdir(), "ac-mcp-" + process.pid + ".jsonl");
+  const logFile = path.join(os.tmpdir(), "cf-mcp-" + process.pid + ".jsonl");
   const consoleProc = spawn(process.execPath,
     [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(port)],
     { stdio: ["ignore", "pipe", "pipe"] });
@@ -226,7 +226,7 @@ function testMcpEndToEnd() {
       (async function () {
         try {
           const init = await rpc("initialize", { protocolVersion: "2025-06-18" });
-          assert.strictEqual(init.result.serverInfo.name, "adversarial-console");
+          assert.strictEqual(init.result.serverInfo.name, "code-forge");
           ok("initialize 握手");
 
           const list = await rpc("tools/list");
@@ -241,7 +241,7 @@ function testMcpEndToEnd() {
           assert.ok(/不得自行宣布达成/.test(gateDesc), "loop_gate 描述必须明写不许自己宣布达标");
           ok("tools/list 五个工具齐全,且描述里明写「达标不由你说」");
 
-          const suite = path.join(os.tmpdir(), "ac-mcp-suite-" + process.pid + ".js");
+          const suite = path.join(os.tmpdir(), "cf-mcp-suite-" + process.pid + ".js");
           fs.writeFileSync(suite, "console.log('coverage: 91%');process.exit(0);");
           const begun = await callTool("loop_begin", {
             session: "MCP 全链路",
@@ -302,8 +302,8 @@ function testMcpEndToEnd() {
 function testPackaging() {
   console.log("packaging — 即插即用的那几个文件");
   const plugin = JSON.parse(fs.readFileSync(path.join(__dirname, ".claude-plugin", "plugin.json"), "utf8"));
-  assert.ok(plugin.mcpServers && plugin.mcpServers["adversarial-console"], "插件必须自带 MCP 声明,否则还要手动接");
-  const args = plugin.mcpServers["adversarial-console"].args.join(" ");
+  assert.ok(plugin.mcpServers && plugin.mcpServers["code-forge"], "插件必须自带 MCP 声明,否则还要手动接");
+  const args = plugin.mcpServers["code-forge"].args.join(" ");
   assert.ok(/\$\{CLAUDE_PLUGIN_ROOT\}/.test(args), "路径必须用 CLAUDE_PLUGIN_ROOT,写死的路径换台机器就废了");
   assert.ok(/--mcp/.test(args));
   ok("plugin.json 自带 MCP server 声明(装完即可用,不必手动 add)");
@@ -312,10 +312,10 @@ function testPackaging() {
   assert.strictEqual(mp.plugins[0].source, "./");
   ok("marketplace.json 指向本目录(可 /plugin marketplace add 本地路径)");
 
-  const skill = fs.readFileSync(path.join(__dirname, "skills", "adversarial-loop", "SKILL.md"), "utf8");
+  const skill = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
   assert.ok(/^---/.test(skill), "技能必须有 frontmatter");
   const fm = skill.split("---")[1];
-  assert.ok(/name:\s*adversarial-loop/.test(fm));
+  assert.ok(/name:\s*code-forge/.test(fm));
   assert.ok(/description:/.test(fm));
   // 技能的触发词得覆盖用户会怎么说,否则永远不被自动调用
   ["对抗", "adversarial", "推翻", "测试通过"].forEach(function (w) {
@@ -327,10 +327,10 @@ function testPackaging() {
   assert.ok(/loop_begin[\s\S]*loop_say[\s\S]*loop_gate/.test(skill), "SKILL.md 必须写清协议顺序");
   ok("SKILL.md：frontmatter、触发词、三条纪律、协议顺序都在");
 
-  const cmd = fs.readFileSync(path.join(__dirname, "commands", "adversarial-loop.toml"), "utf8");
+  const cmd = fs.readFileSync(path.join(__dirname, "commands", "code-forge.toml"), "utf8");
   assert.ok(/description\s*=/.test(cmd) && /prompt\s*=/.test(cmd));
   assert.ok(/\{\{args\}\}/.test(cmd), "斜杠命令要能接目标参数");
-  ok("/adversarial-loop 斜杠命令存在且接参数");
+  ok("/code-forge 斜杠命令存在且接参数");
 
   const agents = fs.readFileSync(path.join(__dirname, "AGENTS.md"), "utf8");
   ["Codex", "opencode", "mcp_servers", "/host/gate"].forEach(function (w) {
@@ -350,32 +350,32 @@ function testPackaging() {
     const get = function (k) { const m = new RegExp("^" + k + ":\\s*(.+)$", "m").exec(fm); return m && m[1].trim(); };
     parsed[get("name")] = { model: get("model"), tools: (get("tools") || "").split(/\s*,\s*/), body: src };
   });
-  ["adv-proposer", "adv-critic", "adv-reviewer"].forEach(function (n) {
+  ["forge-proposer", "forge-critic", "forge-reviewer"].forEach(function (n) {
     assert.ok(parsed[n], "缺角色 " + n);
     assert.ok(parsed[n].model, n + " 必须指定 model,否则「多模型」是句空话");
   });
   // 多模型的意义在于**真的不同**:三个都写 sonnet 就退回成自己跟自己唱反调
-  assert.notStrictEqual(parsed["adv-critic"].model, parsed["adv-proposer"].model,
+  assert.notStrictEqual(parsed["forge-critic"].model, parsed["forge-proposer"].model,
     "反驳者与提议者必须跑在不同模型上");
   ok("三个角色定义齐全,且反驳者与提议者不同模型");
 
   // ★ 反驳者的写权限必须在**工具层面**就没有 —— 只写在提示词里挡不住顺手抹平
   ["Write", "Edit", "Bash", "NotebookEdit"].forEach(function (t) {
-    assert.ok(parsed["adv-critic"].tools.indexOf(t) < 0,
-      "adv-critic 不许有 " + t + " 工具（能改文件的反驳者会顺手把问题抹平)");
-    assert.ok(parsed["adv-reviewer"].tools.indexOf(t) < 0, "adv-reviewer 不许有 " + t);
+    assert.ok(parsed["forge-critic"].tools.indexOf(t) < 0,
+      "forge-critic 不许有 " + t + " 工具（能改文件的反驳者会顺手把问题抹平)");
+    assert.ok(parsed["forge-reviewer"].tools.indexOf(t) < 0, "forge-reviewer 不许有 " + t);
   });
-  assert.ok(parsed["adv-proposer"].tools.indexOf("Edit") >= 0, "提议者得能改文件");
+  assert.ok(parsed["forge-proposer"].tools.indexOf("Edit") >= 0, "提议者得能改文件");
   ok("★ 反驳者/复核者工具层面就没有写权限（不是靠提示词请求）");
 
   // 提议者那份必须明写红线:不许改判据来达标
-  assert.ok(/不许为了让判据变绿去改判据|不许.*改判据/.test(parsed["adv-proposer"].body),
+  assert.ok(/不许为了让判据变绿去改判据|不许.*改判据/.test(parsed["forge-proposer"].body),
     "提议者定义里必须明写不许改判据");
   ok("提议者定义里明写「不许改判据来达标」这条红线");
 
   // 技能里要把派发方式和模型表写清,否则装了角色也不会被用
-  const skillSrc = fs.readFileSync(path.join(__dirname, "skills", "adversarial-loop", "SKILL.md"), "utf8");
-  ["adv-proposer", "adv-critic", "adv-reviewer", "并发"].forEach(function (w) {
+  const skillSrc = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
+  ["forge-proposer", "forge-critic", "forge-reviewer", "并发"].forEach(function (w) {
     assert.ok(skillSrc.indexOf(w) >= 0, "SKILL.md 里缺：" + w);
   });
   ok("SKILL.md 写清了派给哪三个子 agent、以及并发派发");
@@ -385,7 +385,7 @@ function testPackaging() {
   assert.ok(/--uninstall/.test(inst) && /--dry-run/.test(inst), "install.js 要能卸、能预览");
   assert.ok(/installed_plugins/.test(inst) && /刻意\*\*不动\*\*|刻意不动/.test(inst),
     "install.js 必须明说不动插件管理器的内部账本");
-  assert.ok(/bak-adversarial/.test(inst), "改用户主配置前必须先备份");
+  assert.ok(/bak-code-forge/.test(inst), "改用户主配置前必须先备份");
   ok("install.js 幂等/可卸/改主配置前先备份/不碰插件内部账本");
 
   // ★ dry-run 真的必须什么都不做 —— 这里踩过:探测与注册写在一起,`--dry-run` 把 MCP 真装了
