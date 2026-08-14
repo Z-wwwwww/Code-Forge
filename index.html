@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对抗编程监控台</title>
+<!-- 内联 favicon:省一次 404,也省一个文件 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230A0C0F'/%3E%3Ccircle cx='5' cy='8' r='2.2' fill='%236FD3C7'/%3E%3Ccircle cx='11' cy='8' r='2.2' fill='%23E2707A'/%3E%3C/svg%3E">
+<style>
+/* ============================================================
+   对抗编程监控台 — implementation of 对抗编程监控台.dc.html
+   Palette, metrics and behaviour ported 1:1 from the design.
+   Dark-only by design intent (a console screen), so every color
+   is painted explicitly and no theme tokens are inherited.
+   ============================================================ */
+:root{
+  --acc:#6FD3C7;              /* prop: accent */
+  --bg:#0A0C0F; --bg-header:#0D1014; --bg-aside:#0C0E12; --bg-card:#0F1216;
+  --bg-chip:#12161B; --bg-btn:#14181D; --bg-tool:#101419;
+  --line:#1B1F26; --line-2:#1F242B; --line-3:#232830; --line-4:#242A32; --line-5:#1E242C;
+  --tx:#E6E9EE; --tx-1:#D5DBE3; --tx-2:#C3CAD3; --tx-3:#B6BFCA; --tx-4:#99A3B0;
+  --tx-5:#8B95A2; --tx-6:#6B7482; --tx-7:#5A6472; --tx-8:#4E5764; --tx-9:#454E5A; --tx-10:#3A424C;
+  --add:#63C68E; --del:#E2707A; --warn:#E8C468; --tool:#C08CF0;
+  --sans:"IBM Plex Sans","Noto Sans SC",system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,"Noto Sans SC",monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg)}
+body{font-family:var(--sans);color:var(--tx);-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#23282F;border-radius:9px}
+::-webkit-scrollbar-thumb:hover{background:#333A43}
+@keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.82)}}
+@keyframes streamCaret{0%,100%{opacity:1}50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .live-dot,.status-dot,.caret-blink{animation:none!important}
+}
+button{font-family:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* the console is a 1240px-min desktop layout: it scrolls inside its own
+   container so the document body never scrolls sideways */
+.viewport{overflow-x:auto;background:var(--bg)}
+.app{min-height:100vh;min-width:1240px;background:var(--bg);color:var(--tx);display:flex;flex-direction:column}
+
+/* ---------------- header ---------------- */
+.hdr{display:flex;align-items:center;gap:20px;padding:0 20px;height:56px;
+  border-bottom:1px solid var(--line);background:var(--bg-header);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand .nm{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--acc)}
+.brand .ver{font-family:var(--mono);font-size:11px;color:var(--tx-7)}
+.vr{width:1px;height:22px;background:var(--line-2)}
+.sess{display:flex;flex-direction:column;gap:1px;min-width:0}
+.sess .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess .s{font-family:var(--mono);font-size:11px;color:var(--tx-7)}
+.grow{flex:1}
+.status{display:flex;align-items:center;gap:8px;padding:5px 11px 5px 9px;border-radius:999px;border:1px solid}
+.status-dot{width:7px;height:7px;border-radius:50%}
+.status .lb{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.1em}
+.tabs{display:flex;gap:2px;padding:3px;background:var(--bg-btn);border:1px solid var(--line-2);border-radius:8px}
+.tabs button{border:0;cursor:pointer;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;background:transparent;color:var(--tx-6)}
+.tabs button:hover{filter:brightness(1.25)}
+.tabs button.on{background:#242B33;color:var(--tx)}
+.kpis{display:flex;align-items:center;gap:18px;padding-left:6px}
+.kpi{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.kpi .v{font-family:var(--mono);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi .k{font-size:10px;color:var(--tx-7);letter-spacing:.08em}
+/* 事件流连接状态 — 断了必须看得见,不许静默 */
+.conn{font-family:var(--mono);font-size:10px;letter-spacing:.06em;border-radius:999px;
+  padding:2px 8px;border:1px solid;white-space:nowrap}
+.conn.ok{color:var(--tx-7);border-color:var(--line-3);background:var(--bg-btn)}
+.conn.bad{color:var(--warn);border-color:#E8C46840;background:#E8C4680F}
+
+/* ---------------- empty states ---------------- */
+.empty{display:flex;align-items:flex-start;justify-content:center;padding:64px 20px;min-width:1240px}
+.empty-card{max-width:620px;display:flex;flex-direction:column;gap:12px;
+  border:1px solid var(--line);border-radius:12px;background:var(--bg-card);padding:22px 24px}
+.empty-card h1{margin:0;font-size:19px;font-weight:600;letter-spacing:-.01em}
+.empty-card p{margin:0;font-size:13px;line-height:1.7;color:var(--tx-5)}
+.empty-card p.dim{color:var(--tx-7);font-family:var(--mono);font-size:11.5px}
+.empty-card code{font-family:var(--mono);font-size:12px;color:var(--acc)}
+.empty-card pre{margin:0;padding:12px 14px;border:1px solid var(--line-5);border-radius:8px;
+  background:var(--bg);font-family:var(--mono);font-size:11.5px;line-height:1.75;
+  color:var(--tx-3);overflow-x:auto;white-space:pre}
+.empty-min{font-size:11.5px;color:var(--tx-8);font-family:var(--mono)}
+
+/* ---------------- 3-column shell ---------------- */
+.shell{display:grid;grid-template-columns:268px minmax(600px,1fr) minmax(340px,400px);
+  align-items:start;flex:1;min-height:0;min-width:1240px}
+.pane{height:calc(100vh - 56px);overflow-y:auto;position:sticky;top:56px;background:var(--bg-aside)}
+.pane.l{border-right:1px solid var(--line);display:flex;flex-direction:column}
+.pane.r{border-left:1px solid var(--line)}
+.seclab{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--tx-7)}
+.hr{height:1px;background:var(--line)}
+
+/* rounds list */
+.blk-rounds{padding:14px 14px 10px}
+.blk-rounds .seclab{margin-bottom:10px;display:block}
+.rlist{display:flex;flex-direction:column;gap:4px}
+.ritem{text-align:left;cursor:pointer;display:grid;grid-template-columns:26px 1fr auto;align-items:center;
+  gap:9px;padding:8px 9px;border-radius:7px;border:1px solid var(--line);background:transparent}
+.ritem:hover{border-color:#2E353E}
+.ritem.on{background:#141A20;border-color:#2C333C}
+.ritem .n{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--tx-7)}
+.ritem.on .n{color:var(--acc)}
+.ritem .mid{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ritem .ti{font-size:12px;font-weight:500;color:var(--tx-5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ritem.on .ti{color:var(--tx)}
+.ritem .me{font-size:10px;font-family:var(--mono);color:var(--tx-7)}
+.ritem .d{width:6px;height:6px;border-radius:50%}
+
+/* token ranking */
+.blk-rank{padding:10px 14px 12px}
+.blk-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
+.blk-head .scope{font-size:10px;font-family:var(--mono);color:#3E4650}
+.rank{display:flex;flex-direction:column;gap:9px}
+.rank button{cursor:pointer;text-align:left;border:0;background:transparent;padding:0;
+  display:flex;flex-direction:column;gap:5px}
+.rank button:hover{opacity:1!important}
+.rank .top{display:flex;align-items:center;gap:6px}
+.rank .sw{width:5px;height:5px;border-radius:1px}
+.rank .nm{font-size:11.5px;font-weight:500;color:var(--tx-2)}
+.rank .tot{font-family:var(--mono);font-size:11px;color:var(--tx-5)}
+.rank .bar{display:block;height:5px;border-radius:3px;background:#171B21;overflow:hidden;position:relative}
+.rank .bar i,.rank .bar u{position:absolute;top:0;bottom:0;display:block}
+.rank .foot{display:flex;gap:10px;font-family:var(--mono);font-size:9.5px;color:var(--tx-8)}
+.legend{display:flex;gap:12px;margin-top:12px;font-size:9.5px;color:var(--tx-8);font-family:var(--mono)}
+.legend span{display:flex;align-items:center;gap:5px}
+.legend i{width:14px;height:5px;border-radius:3px;background:var(--acc)}
+
+/* models */
+.blk-models{padding:12px 14px 20px}
+.blk-models .seclab{margin-bottom:11px;display:block}
+.mlist{display:flex;flex-direction:column;gap:8px}
+.mcard{border:1px solid var(--line);border-radius:7px;padding:8px 9px;background:var(--bg-card)}
+.mcard .top{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.mcard .nm{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--tx-1)}
+.mcard .ad{font-family:var(--mono);font-size:10px}
+.mcard .bars{display:flex;gap:3px;margin-bottom:6px}
+.mcard .bars i{flex:1;height:14px;border-radius:2px}
+.mcard .foot{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:var(--tx-8)}
+
+/* ---------------- main ---------------- */
+main{min-width:0;height:calc(100vh - 56px);overflow-y:auto;background:var(--bg)}
+.mhead{position:sticky;top:0;z-index:10;background:#0A0C0FF2;backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);padding:13px 20px 11px}
+.mhead .row1{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}
+.mhead .rt{display:flex;flex-direction:column;gap:4px;min-width:0}
+.mhead .l1{display:flex;align-items:center;gap:9px;white-space:nowrap}
+.mhead .rn{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--acc);letter-spacing:.1em}
+.mhead .ti{font-size:15px;font-weight:600}
+.mhead .me{font-size:11.5px;color:var(--tx-6);font-family:var(--mono)}
+.verdict{display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:8px;flex:none;
+  white-space:nowrap;border:1px solid}
+.verdict .k{font-size:10px;letter-spacing:.14em;color:var(--tx-7);font-weight:700}
+.verdict .d{width:5px;height:5px;border-radius:50%}
+.verdict .w{font-size:12.5px;font-weight:600}
+.verdict .sc{font-family:var(--mono);font-size:11px;color:var(--tx-6)}
+.chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chip{cursor:pointer;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
+  font-size:11.5px;font-weight:500;white-space:nowrap;flex:none;border:1px solid var(--line-3);
+  background:var(--bg-chip);color:var(--tx-5)}
+.chip:hover{filter:brightness(1.3)}
+.chip .d{width:5px;height:5px;border-radius:50%}
+.chip .c{font-family:var(--mono);font-size:10px;opacity:.65}
+.expandall{cursor:pointer;font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:6px;
+  border:1px solid var(--line-3);background:var(--bg-btn);color:var(--tx-5)}
+.expandall:hover{color:var(--tx);border-color:#333A43}
+
+/* timeline */
+.tl{padding:18px 20px 60px}
+.tl .rows{display:flex;flex-direction:column;gap:2px}
+.ev{display:grid;grid-template-columns:68px 22px minmax(0,1fr);column-gap:12px}
+.ev .gut{text-align:right;padding-top:13px;font-family:var(--mono);font-size:10.5px;color:var(--tx-9);line-height:1.4}
+.ev .gut .dur{color:var(--tx-10)}
+.ev .rail{display:flex;flex-direction:column;align-items:center;padding-top:15px}
+.ev .rail .d{width:9px;height:9px;border-radius:50%;border:2px solid;flex:none}
+.ev .rail .ln{flex:1;width:1px;background:var(--line);min-height:12px}
+.ev .body{padding-bottom:14px;min-width:0}
+.card{border:1px solid var(--line);border-left:2px solid;border-radius:8px;background:var(--bg-aside);overflow:hidden}
+.card.open{border-color:var(--line-4);background:var(--bg-card)}
+.card>.sum{width:100%;cursor:pointer;text-align:left;border:0;background:transparent;
+  display:flex;align-items:center;gap:10px;padding:10px 12px}
+.card>.sum:hover{background:#FFFFFF06}
+.sum .role{font-size:12.5px;font-weight:600;white-space:nowrap}
+.sum .model{font-family:var(--mono);font-size:10px;color:var(--tx-7);border:1px solid var(--line-3);
+  border-radius:4px;padding:1px 5px;white-space:nowrap}
+.sum .kind{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;
+  border-radius:4px;padding:2px 6px;white-space:nowrap}
+.sum .txt{font-size:12.5px;color:#97A1AE;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.sum .tok{font-family:var(--mono);font-size:10.5px;color:var(--tx-6);white-space:nowrap;flex:none}
+.sum .car{font-family:var(--mono);font-size:10px;color:var(--tx-9);width:10px;text-align:center;flex:none}
+.det{padding:0 12px 12px;display:flex;flex-direction:column;gap:10px}
+.targets{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:11px;color:var(--tx-6)}
+.targets .k{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--tx-9)}
+.targets .t{font-size:11px;font-weight:500;border:1px solid;border-radius:999px;padding:1px 8px}
+.prose{font-family:var(--mono);font-size:12px;line-height:1.75;color:var(--tx-3);white-space:pre-wrap}
+
+/* tool block */
+.tool{border:1px solid var(--line-5);border-radius:7px;background:var(--bg);overflow:hidden}
+.tool .th{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg-tool);border-bottom:1px solid var(--line-5)}
+.tool .tag{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--tool);font-weight:600}
+.tool .nm{font-family:var(--mono);font-size:11.5px;color:var(--tx-1)}
+.tool .st{font-family:var(--mono);font-size:10px}
+.tool .ms{font-family:var(--mono);font-size:10px;color:var(--tx-9)}
+.tool .tb{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.tool .args{font-family:var(--mono);font-size:11px;color:#7C8794;white-space:pre-wrap}
+.tool .res{font-family:var(--mono);font-size:11px;color:#9AA5B2;white-space:pre-wrap}
+.tool .sep{height:1px;background:#171B21}
+
+/* diff block */
+.diff{border:1px solid var(--line-5);border-radius:7px;overflow:hidden;background:var(--bg)}
+.diff .dh{display:flex;align-items:center;gap:9px;padding:7px 10px;background:var(--bg-tool);border-bottom:1px solid var(--line-5)}
+.diff .f{font-family:var(--mono);font-size:11.5px;color:var(--tx-1)}
+.diff .a{font-family:var(--mono);font-size:10.5px;color:var(--add)}
+.diff .r{font-family:var(--mono);font-size:10.5px;color:var(--del)}
+.diff .lines{padding:6px 0}
+.dl{display:grid;grid-template-columns:34px 12px 1fr;font-family:var(--mono);font-size:11.5px;line-height:1.65}
+.dl .ln{text-align:right;padding-right:8px;color:var(--tx-10)}
+.dl .tx{white-space:pre;overflow-x:auto}
+
+/* streaming tail */
+.stream{display:grid;grid-template-columns:68px 22px minmax(0,1fr);column-gap:12px}
+.stream .rail{display:flex;justify-content:center;padding-top:6px}
+.live-dot{width:9px;height:9px;border-radius:50%;background:var(--acc);animation:livePulse 1.4s ease-in-out infinite}
+.stream .body{display:flex;align-items:center;gap:10px;padding:4px 0 0}
+.stream .who{font-size:12.5px;font-weight:600;color:var(--acc)}
+.stream .say{font-family:var(--mono);font-size:12px;color:#7C8794}
+.caret-blink{width:7px;height:14px;background:var(--acc);animation:streamCaret 1s step-end infinite}
+
+/* ---------------- right pane ---------------- */
+.blk-conf{padding:14px 16px 12px}
+.blk-conf .seclab{margin-bottom:11px;display:block}
+.clist{display:flex;flex-direction:column;gap:8px}
+.conf{border:1px solid var(--line);border-radius:8px;background:var(--bg-card);overflow:hidden}
+.conf .ch{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #171B21}
+.conf .sev{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;border-radius:4px;padding:2px 6px}
+.conf .tp{font-size:12px;font-weight:600;color:var(--tx-1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conf .cb{padding:9px 10px;display:flex;flex-direction:column;gap:8px}
+.conf .side{display:grid;grid-template-columns:54px 1fr;gap:8px;align-items:start}
+.conf .side .who{font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conf .side .cl{font-size:11.5px;line-height:1.6;color:var(--tx-4)}
+.conf .jd{display:flex;align-items:center;gap:7px;border-top:1px dashed var(--line);margin-top:2px;padding-top:8px}
+.conf .jd .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--tx-9)}
+.conf .jd .v{font-size:11.5px;font-weight:500}
+
+.blk-patch{padding:13px 16px 40px}
+.ptrail{display:flex;flex-direction:column}
+.pt{display:grid;grid-template-columns:30px 1fr;column-gap:10px}
+.pt .rail{display:flex;flex-direction:column;align-items:center}
+.pt .rail .n{font-family:var(--mono);font-size:10px;font-weight:600;padding-top:9px}
+.pt .rail .ln{flex:1;width:1px;background:var(--line);margin-top:6px}
+.pt .b{padding-bottom:12px}
+.pcard{border:1px solid var(--line);border-radius:8px;background:var(--bg-card);padding:9px 10px;
+  display:flex;flex-direction:column;gap:7px}
+.pcard .top{display:flex;align-items:center;gap:7px}
+.pcard .f{font-family:var(--mono);font-size:11px;color:var(--tx-1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .a{font-family:var(--mono);font-size:10px;color:var(--add)}
+.pcard .r{font-family:var(--mono);font-size:10px;color:var(--del)}
+.pcard .note{font-size:11.5px;line-height:1.6;color:var(--tx-5)}
+.pcard .foot{display:flex;align-items:center;gap:7px}
+.pcard .by{font-size:10.5px;font-weight:600}
+.pcard .st{font-family:var(--mono);font-size:10px;border:1px solid;border-radius:4px;padding:1px 5px}
+.pcard .te{font-family:var(--mono);font-size:10px;color:var(--tx-9)}
+</style>
+
+</head>
+<body>
+<div class="viewport"><div class="app" id="app"></div></div>
+
+<script>
+"use strict";
+/* ---------------- props (design's data-props, overridable via query string) ---------- */
+var Q = new URLSearchParams(location.search);
+var PROPS = {
+  accent: ["#6FD3C7","#7EA8F0","#E8C468","#C08CF0"].indexOf(Q.get("accent")) >= 0 ? Q.get("accent") : "#6FD3C7",
+  defaultExpanded: Q.get("expanded") === "1",
+  showTokenSplit: Q.get("split") !== "0"
+};
+document.documentElement.style.setProperty("--acc", PROPS.accent);
+
+/* ============================================================
+   事件流 → 视图状态
+
+   页面自己不存任何事实:所有数字(角色 token、模型采纳、全会话总量)
+   都从 /events 这条 append-only 流 reduce 出来。断线重连由浏览器带
+   Last-Event-ID 回来,服务端从第 N 条之后接着发,故重连与回放是同一条路径。
+   ============================================================ */
+var KIND = {
+  propose:{ label:"PROPOSE", color:"#6FD3C7" }, attack:{ label:"ATTACK", color:"#E2707A" },
+  defend: { label:"DEFEND",  color:"#7EA8F0" }, verdict:{ label:"VERDICT", color:"#E8C468" },
+  patch:  { label:"PATCH",   color:"#7EA8F0" }, test:   { label:"TEST",    color:"#63C68E" },
+  audit:  { label:"AUDIT",   color:"#C08CF0" }, route:  { label:"ROUTE",   color:"#8B95A2" }
+};
+var BAR_COLORS = ["#171B21","#63C68E","#E8C468","#3A4450"];
+var BAR_LEGEND = ["未参与本轮判定","被采纳","主导裁决","进行中"];
+var SEV_COLORS = { HIGH:"#E2707A", MED:"#E8C468", LOW:"#8B95A2", OPEN:"#6FD3C7" };
+var FALLBACK_COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
+
+var STORE = { run:null, roles:{}, roleOrder:[], rounds:[], byN:{}, streaming:null, ended:null, count:0, unknown:0 };
+// 服务端的回环状态(是否真的在跑)。页面自己猜不出来 —— 日志里没有 run.end 既可能是
+// 还在跑,也可能是进程早就没了,这两件事对「停止」按钮该不该出现是相反的。
+var SERVER = { active:false, lastReason:null, checked:false };
+var STOP_REASONS = {
+  goal_met:"达标停止", budget_tokens:"TOKEN 预算耗尽", budget_time:"超出时限",
+  max_rounds:"到达轮数上限", no_progress:"连续零进展", stopped:"手动停止",
+  gate_broken:"判据本身失败", driver_error:"驱动异常"
+};
+function refreshServer(){
+  fetch("/health").then(function(r){ return r.json(); }).then(function(h){
+    SERVER.active = !!(h.run && h.run.active);
+    SERVER.lastReason = (h.run && h.run.lastReason) || null;
+    SERVER.checked = true;
+    schedule();
+  }).catch(function(){ SERVER.checked = true; });
+}
+
+function ensureRole(id){
+  if (!STORE.roles[id]) {
+    STORE.roles[id] = { id:id, name:id, model:"—",
+      color: FALLBACK_COLORS[STORE.roleOrder.length % FALLBACK_COLORS.length],
+      inTok:0, outTok:0, calls:0, tokUnknown:0 };
+    STORE.roleOrder.push(id);
+  }
+  return STORE.roles[id];
+}
+// 事件先到、round.start 后到也不丢:按需建轮
+function ensureRound(n){
+  if (!STORE.byN[n]) {
+    STORE.byN[n] = { n:n, title:"第 " + n + " 轮", meta:"", live:true,
+      events:[], conflicts:[], patches:[], winner:null, winnerRole:null, score:null };
+    STORE.rounds.push(STORE.byN[n]);
+    STORE.rounds.sort(function(a,b){ return a.n - b.n; });
+  }
+  return STORE.byN[n];
+}
+function applyEvent(ev){
+  STORE.count++;
+  switch (ev.t) {
+    case "run.start":
+      // 一份日志可以按顺序装下多次回环,而轮次是按 n 索引的 —— 不在这里换一茬,
+      // 第二次回环的「第 1 轮」就会和第一次的混进同一格,页面上完全看不出来。
+      // 硬盘上的历史一条不丢,只是视图切到最新这一次。
+      if (STORE.run) {
+        STORE.roles = {}; STORE.roleOrder = []; STORE.rounds = []; STORE.byN = {};
+        STORE.streaming = null; STORE.ended = null;
+        state.round = null; state.follow = true; state.open = {}; state.roleFilter = null;
+      }
+      STORE.run = ev;
+      break;
+    case "role.add": {
+      var r = ensureRole(ev.id);
+      if (ev.name) r.name = ev.name;
+      if (ev.model) r.model = ev.model;
+      if (ev.color) r.color = ev.color;
+      if (ev.duty) r.duty = ev.duty;
+      break;
+    }
+    case "round.start": {
+      var rd = ensureRound(ev.n);
+      if (ev.title) rd.title = ev.title;
+      if (ev.meta) rd.meta = ev.meta;
+      break;
+    }
+    case "event": {
+      var rr = ensureRound(ev.round || 1);
+      rr.events.push(ev);
+      var role = ensureRole(ev.role);
+      var tk = ev.tok || null;
+      // 宿主执行时用量在用户的订阅账上,这里根本拿不到。缺了就记「不可得」,
+      // 不要当成 0 —— 显示 0.0k 等于宣称这次调用没花钱,那是假账。
+      if (tk) { role.inTok += tk.in || 0; role.outTok += tk.out || 0; }
+      else if (ev.role !== "gate") { role.tokUnknown = (role.tokUnknown || 0) + 1; }
+      role.calls += 1;
+      break;
+    }
+    case "conflict": ensureRound(ev.round || 1).conflicts.push(ev); break;
+    case "patch":    ensureRound(ev.round || 1).patches.push(ev); break;
+    case "round.end": {
+      var re = ensureRound(ev.n);
+      re.live = false;
+      re.winner = ev.winner || "—";
+      re.winnerRole = ev.winnerRole || null;
+      re.score = ev.score || "—";
+      break;
+    }
+    case "run.streaming": STORE.streaming = ev; break;
+    case "run.end":       STORE.ended = ev; refreshServer(); break;
+    default:
+      // 认不出的类型不静默吞掉:计数并在页头显示,否则「喂错了形状」看不出来
+      STORE.unknown++;
+      console.warn("[console] 未知事件类型:", ev.t, ev);
+  }
+}
+
+/* ---------------- 派生量(全部现算,不缓存) ---------------- */
+function roleList(){ return STORE.roleOrder.map(function(id){ return STORE.roles[id]; }); }
+function roleOf(id){ return STORE.roles[id] || ensureRole(id); }
+function latestRound(){ return STORE.rounds.length ? STORE.rounds[STORE.rounds.length - 1] : null; }
+function curRound(){
+  if (state.round != null && STORE.byN[state.round]) return STORE.byN[state.round];
+  return latestRound();
+}
+function totals(){
+  return roleList().reduce(function(a,r){ a.in += r.inTok; a.out += r.outTok; return a; }, { in:0, out:0 });
+}
+function roundMeta(rd){
+  var counted = rd.events.length + " 事件 · " + rd.conflicts.length + " 分歧";
+  // 结轮之后 meta 是终稿,照发;进行中的轮子数还在变,声明的那份必然过期,只留它的时间段
+  if (!rd.live) return rd.meta || counted;
+  return rd.meta ? rd.meta + " · " + counted : counted;
+}
+function winColorOf(rd){
+  if (rd.live) return "#6B7482";
+  var r = rd.winnerRole && STORE.roles[rd.winnerRole];
+  return r ? r.color : "#8B95A2";
+}
+// 模型对比:每轮一格。3 进行中 / 2 主导裁决(出 verdict 的角色) / 1 被采纳(胜方角色) / 0 未参与
+function modelStats(){
+  var names = [], byModel = {};
+  roleList().forEach(function(r){
+    if (names.indexOf(r.model) < 0) { names.push(r.model); byModel[r.model] = []; }
+    byModel[r.model].push(r);
+  });
+  return names.map(function(m){
+    var rs = byModel[m];
+    var ids = rs.map(function(r){ return r.id; });
+    var bars = STORE.rounds.map(function(rd){
+      var acted = rd.events.some(function(e){ return ids.indexOf(e.role) >= 0; });
+      if (rd.live) return acted ? 3 : 0;
+      var verdict = rd.events.filter(function(e){ return e.kind === "verdict"; }).pop();
+      if (verdict && ids.indexOf(verdict.role) >= 0) return 2;
+      if (rd.winnerRole && ids.indexOf(rd.winnerRole) >= 0) return 1;
+      return 0;
+    });
+    return {
+      name: m,
+      tokens: rs.reduce(function(a,r){ return a + r.inTok + r.outTok; }, 0),
+      roles: rs.map(function(r){ return r.name; }).join(" · "),
+      adopted: bars.filter(function(v){ return v === 1; }).length,
+      rounds: STORE.rounds.length,
+      bars: bars
+    };
+  });
+}
+
+/* ---------------- 交互状态 ---------------- */
+var state = { round:null, follow:true, mode:"live", open:{}, expandAll:false, roleFilter:null };
+var conn = { state:"connecting", since:0 };
+
+function k1(n){ return (n / 1000).toFixed(1) + "k"; }
+function tokLabel(tk){ tk = tk || {}; return k1(tk.in || 0) + " / " + k1(tk.out || 0); }
+function esc(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+/* ---------------- 页头 ---------------- */
+function renderHeader(round, isLive){
+  var ACC = PROPS.accent;
+  var run = STORE.run || {};
+  var dotC = isLive ? ACC : "#8B95A2";
+  var t = totals();
+  var tabs = [{ key:"live", label:"实时" }, { key:"replay", label:"复盘" }].map(function(tb){
+    return '<button data-act="mode" data-v="' + tb.key + '"' + (state.mode === tb.key ? ' class="on"' : "") + ">" + esc(tb.label) + "</button>";
+  }).join("");
+  var connPill = conn.state === "open"
+    ? '<span class="conn ok" title="事件流已连接">流 · ' + STORE.count + "</span>"
+    : '<span class="conn bad" title="事件流未连接,正在重试">流 · ' + (conn.state === "connecting" ? "连接中" : "重连中") + "</span>";
+  var unknown = STORE.unknown
+    ? '<span class="conn bad" title="收到认不出的事件类型,已忽略但计数">未知 ' + STORE.unknown + "</span>" : "";
+  // 停止原因必须是真的那一条 —— 「烧完停」和「达标停」下一步动作完全不同
+  var endPill = STORE.ended
+    ? '<span class="pill ' + (STORE.ended.reason === "goal_met" ? "good" : "bad") + '" title="' +
+      esc(STORE.ended.detail || "") + '">' + esc(STOP_REASONS[STORE.ended.reason] || STORE.ended.reason) + "</span>"
+    : "";
+  var stopBtn = SERVER.active
+    ? '<button class="expandall" data-act="stopRun" title="打断在途调用；已花的会记成估算">停止回环</button>'
+    : (STORE.count ? '<a class="expandall" href="/setup">新建回环</a>' : "");
+  return '<header class="hdr">' +
+      '<div class="brand"><span class="nm">ADVERSARIAL·MCP</span><span class="ver">' + esc(run.version || "") + "</span></div>" +
+      '<div class="vr"></div>' +
+      '<div class="sess">' +
+        '<div class="t">' + (run.session ? "session · " + esc(run.session) : "等待 run.start …") + "</div>" +
+        '<div class="s">' + esc([run.repo, run.branch ? "branch " + run.branch : "", run.client ? "client: " + run.client : ""].filter(Boolean).join(" · ")) + "</div>" +
+      "</div>" +
+      '<div class="grow"></div>' + endPill + stopBtn + connPill + unknown +
+      '<div class="status" style="border-color:' + (isLive ? ACC + "4D" : "#232830") + ";background:" + (isLive ? ACC + "14" : "#14181D") + '">' +
+        '<span class="status-dot" style="background:' + dotC + ";" + (isLive ? "animation:livePulse 1.6s ease-in-out infinite" : "") + '"></span>' +
+        '<span class="lb" style="color:' + dotC + '">' + (isLive ? "LIVE" : "回放 REPLAY") + "</span>" +
+      "</div>" +
+      '<div class="tabs">' + tabs + "</div>" +
+      '<div class="kpis">' +
+        '<div class="kpi" title="' + (t.in + t.out ? "" : "宿主执行时用量在你的订阅账上,监控台拿不到") + '">' +
+          '<span class="v">' + (t.in + t.out ? k1(t.in + t.out) : "—") + '</span>' +
+          '<span class="k">' + (t.in + t.out ? "TOKENS 总计" : "TOKENS 不可得") + "</span></div>" +
+        '<div class="kpi"><span class="v">' + STORE.rounds.length + '</span><span class="k">对抗轮次</span></div>' +
+      "</div>" +
+    "</header>";
+}
+
+/* ---------------- 左栏 ---------------- */
+function renderRoundList(){
+  var cur = curRound();
+  return STORE.rounds.map(function(r){
+    var on = cur && r.n === cur.n;
+    var meta = r.live ? "进行中 · " + r.events.length + " 事件"
+                      : r.events.length + " 事件 · " + r.conflicts.length + " 分歧";
+    return '<button class="ritem' + (on ? " on" : "") + '" data-act="round" data-v="' + r.n + '">' +
+      '<span class="n">R' + r.n + "</span>" +
+      '<span class="mid"><span class="ti">' + esc(r.title) + '</span><span class="me">' + esc(meta) + "</span></span>" +
+      '<span class="d" style="background:' + (r.live ? PROPS.accent : winColorOf(r)) + '"></span>' +
+    "</button>";
+  }).join("");
+}
+function renderRanking(){
+  var rs = roleList();
+  if (!rs.length) return '<div class="empty-min">还没有角色</div>';
+  var max = Math.max.apply(null, rs.map(function(r){ return r.inTok + r.outTok; }).concat([1]));
+  return rs.slice().sort(function(a,b){ return (b.inTok + b.outTok) - (a.inTok + a.outTok); }).map(function(r){
+    var total = r.inTok + r.outTok;
+    var w = (total / max) * 100;
+    var inPct = (PROPS.showTokenSplit && total) ? (w * r.inTok / total) : 0;
+    var outPct = (PROPS.showTokenSplit && total) ? (w * r.outTok / total) : w;
+    var op = (!state.roleFilter || state.roleFilter === r.id) ? "1" : "0.4";
+    // 宿主执行:没有任何一次调用报得出用量 → 整行如实标「不可得」,不画一条假的 0 长度条
+    var unknown = !total && r.tokUnknown > 0;
+    // 压根没发言过的角色写「未发言」。显示 0.0k 会被读成「量过了,是 0」——
+    // 「没发生」和「发生了但是 0」是两件事(判据那行才是真的 0)。
+    var silent = r.calls === 0;
+    return '<button data-act="rank" data-v="' + r.id + '" style="opacity:' + op + '" title="' +
+        esc(r.duty || r.name) + (unknown ? " · 用量在宿主账上,这里拿不到" : "") + '">' +
+      '<span class="top">' +
+        '<span class="sw" style="background:' + r.color + '"></span>' +
+        '<span class="nm">' + esc(r.name) + "</span>" +
+        '<span class="grow"></span>' +
+        '<span class="tot">' + (silent ? "未发言" : unknown ? r.calls + " 次发言" : k1(total)) + "</span>" +
+      "</span>" +
+      (unknown || silent ? "" :
+        '<span class="bar">' +
+          '<i style="left:0;width:' + inPct.toFixed(1) + "%;background:" + r.color + ';opacity:.38"></i>' +
+          '<u style="left:' + inPct.toFixed(1) + "%;width:" + outPct.toFixed(1) + "%;background:" + r.color + '"></u>' +
+        "</span>") +
+      '<span class="foot">' +
+        (silent ? '<span>本回环还没轮到它</span>'
+          : unknown ? '<span>用量不可得（宿主执行）</span>'
+          : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>") +
+        "<span>" + esc(r.model) + "</span>" +
+        (unknown || silent ? "" : "<span>" + r.calls + " 次</span>") +
+      "</span>" +
+    "</button>";
+  }).join("");
+}
+function renderModels(){
+  var ms = modelStats();
+  if (!ms.length) return '<div class="empty-min">还没有模型</div>';
+  return ms.map(function(m){
+    var bars = m.bars.map(function(v,i){
+      return '<i style="background:' + (BAR_COLORS[v] || BAR_COLORS[0]) + '" title="R' + (i + 1) + " · " + esc(BAR_LEGEND[v]) + '"></i>';
+    }).join("") || '<i style="background:' + BAR_COLORS[0] + '"></i>';
+    return '<div class="mcard">' +
+      '<div class="top"><span class="nm">' + esc(m.name) + '</span><span class="grow"></span>' +
+        '<span class="ad" style="color:' + (m.adopted > 0 ? "#63C68E" : "#4E5764") + '">采纳 ' + m.adopted + "/" + m.rounds + " 轮</span></div>" +
+      '<div class="bars">' + bars + "</div>" +
+      '<div class="foot"><span>' + k1(m.tokens) + " tok</span><span>" + esc(m.roles) + "</span></div>" +
+    "</div>";
+  }).join("");
+}
+function renderLeft(){
+  return '<aside class="pane l" id="pane-l">' +
+      '<div class="blk-rounds"><span class="seclab">轮次 ROUNDS</span><div class="rlist">' +
+        (STORE.rounds.length ? renderRoundList() : '<div class="empty-min">还没有轮次</div>') + "</div></div>" +
+      '<div class="hr" style="margin:6px 0"></div>' +
+      '<div class="blk-rank">' +
+        '<div class="blk-head"><span class="seclab">TOKEN 消耗排行</span><span class="scope">全会话</span></div>' +
+        '<div class="rank">' + renderRanking() + "</div>" +
+        '<div class="legend"><span><i style="opacity:.38"></i>输入</span><span><i></i>输出</span></div>' +
+      "</div>" +
+      '<div class="hr" style="margin:2px 0 0"></div>' +
+      '<div class="blk-models"><span class="seclab">模型对比 MODELS</span><div class="mlist">' + renderModels() + "</div></div>" +
+    "</aside>";
+}
+
+/* ---------------- 主区 ---------------- */
+function renderChips(round){
+  var counts = {};
+  round.events.forEach(function(e){ counts[e.role] = (counts[e.role] || 0) + 1; });
+  var list = [{ id:null, name:"全部", color:"#8B95A2", count:round.events.length }].concat(
+    roleList().filter(function(r){ return counts[r.id]; }).map(function(r){
+      return { id:r.id, name:r.name, color:r.color, count:counts[r.id] };
+    })
+  );
+  return list.map(function(c){
+    var on = state.roleFilter === c.id;
+    var style = on ? "background:" + c.color + "1F;border-color:" + c.color + "66;color:#E6E9EE" : "";
+    return '<button class="chip" data-act="chip" data-v="' + (c.id == null ? "" : c.id) + '" style="' + style + '">' +
+      '<span class="d" style="background:' + c.color + '"></span>' + esc(c.name) +
+      '<span class="c">' + c.count + "</span></button>";
+  }).join("");
+}
+function renderTool(t){
+  var bad = /fail|blocking|flaky|error/i.test(t.status || "");
+  return '<div class="tool">' +
+    '<div class="th"><span class="tag">MCP TOOL</span><span class="nm">' + esc(t.name) + "</span>" +
+      '<span class="grow"></span>' +
+      '<span class="st" style="color:' + (bad ? "#E2707A" : "#63C68E") + '">' + esc(t.status) + "</span>" +
+      '<span class="ms">' + esc(t.ms) + "</span></div>" +
+    '<div class="tb"><div class="args">' + esc(t.args) + "</div>" +
+      '<div class="sep"></div><div class="res">' + esc(t.result) + "</div></div>" +
+  "</div>";
+}
+function renderDiff(df){
+  var lines = (df.lines || []).map(function(l){
+    var add = l.kind === "+", del = l.kind === "-";
+    var bg = add ? "#63C68E14" : del ? "#E2707A14" : "transparent";
+    var sc = add ? "#63C68E" : del ? "#E2707A" : "#3A424C";
+    var tc = add ? "#BFE7CE" : del ? "#EFC2C7" : "#7C8794";
+    return '<div class="dl" style="background:' + bg + '">' +
+      '<span class="ln">' + (add ? "" : l.ln) + "</span>" +
+      '<span style="color:' + sc + '">' + esc(l.sign) + "</span>" +
+      '<span class="tx" style="color:' + tc + '">' + esc(l.text) + "</span></div>";
+  }).join("");
+  return '<div class="diff">' +
+    '<div class="dh"><span class="f">' + esc(df.file) + '</span><span class="grow"></span>' +
+      '<span class="a">+' + df.add + '</span><span class="r">−' + df.del + "</span></div>" +
+    '<div class="lines">' + lines + "</div>" +
+  "</div>";
+}
+function renderEvents(round){
+  var shown = round.events.filter(function(e){ return !state.roleFilter || e.role === state.roleFilter; });
+  if (!shown.length) return '<div class="empty-min" style="padding:14px 0">该角色在本轮没有事件。</div>';
+  return shown.map(function(e){
+    var r = roleOf(e.role);
+    var key = round.n + "-" + round.events.indexOf(e);
+    var k = KIND[e.kind] || KIND.route;
+    var open = state.open[key] !== undefined ? !!state.open[key] : (state.expandAll || PROPS.defaultExpanded);
+    var det = "";
+    if (open) {
+      var parts = ['<div class="hr"></div>'];
+      if (e.targets && e.targets.length) {
+        parts.push('<div class="targets"><span class="k">针对</span>' +
+          e.targets.map(function(t){
+            var tr = roleOf(t);
+            return '<span class="t" style="color:' + tr.color + ";border-color:" + tr.color + '4D">' + esc(tr.name) + "</span>";
+          }).join("") + "</div>");
+      }
+      if (e.body) parts.push('<div class="prose">' + esc(e.body) + "</div>");
+      if (e.tool) parts.push(renderTool(e.tool));
+      if (e.diff) parts.push(renderDiff(e.diff));
+      det = '<div class="det">' + parts.join("") + "</div>";
+    }
+    return '<div class="ev">' +
+      '<div class="gut"><div>' + esc(e.ts) + '</div><div class="dur">' + esc(e.dur) + "</div></div>" +
+      '<div class="rail"><span class="d" style="border-color:' + r.color + ";background:" + (open ? r.color : "#0A0C0F") + '"></span>' +
+        '<span class="ln"></span></div>' +
+      '<div class="body"><div class="card' + (open ? " open" : "") + '" style="border-left-color:' + r.color + '">' +
+        '<button class="sum" data-act="toggle" data-v="' + key + '" aria-expanded="' + open + '">' +
+          '<span class="role" style="color:' + r.color + '">' + esc(r.name) + "</span>" +
+          '<span class="model">' + esc(r.model) + "</span>" +
+          '<span class="kind" style="color:' + k.color + ";background:" + k.color + '16">' + k.label + "</span>" +
+          '<span class="txt">' + esc(e.summary) + "</span>" +
+          '<span class="tok">' + tokLabel(e.tok) + "</span>" +
+          '<span class="car">' + (open ? "▾" : "▸") + "</span>" +
+        "</button>" + det +
+      "</div></div>" +
+    "</div>";
+  }).join("");
+}
+function renderMain(round, isLive){
+  var wc = winColorOf(round);
+  var vb = round.live ? "#232830" : wc + "40";
+  var vbg = round.live ? "#14181D" : wc + "12";
+  var say = STORE.streaming && STORE.streaming.text ? STORE.streaming.text : "等待下一个事件…";
+  var who = STORE.streaming && STORE.streaming.role ? roleOf(STORE.streaming.role).name : "本轮";
+  var stream = isLive ? (
+    '<div class="stream">' + "<div></div>" +
+      '<div class="rail"><span class="live-dot"></span></div>' +
+      '<div class="body"><span class="who">' + esc(who) + '</span>' +
+        '<span class="say">' + esc(say) + '</span><span class="caret-blink"></span></div>' +
+    "</div>") : "";
+  return '<main id="pane-m">' +
+      '<div class="mhead">' +
+        '<div class="row1">' +
+          '<div class="rt"><div class="l1"><span class="rn">ROUND ' + round.n + '</span>' +
+            '<span class="ti">' + esc(round.title) + "</span></div>" +
+            '<div class="me">' + esc(roundMeta(round)) + "</div></div>" +
+          '<div class="grow"></div>' +
+          '<div class="verdict" style="border-color:' + vb + ";background:" + vbg + '">' +
+            '<span class="k">裁决</span>' +
+            '<span class="d" style="background:' + wc + '"></span>' +
+            '<span class="w" style="color:' + wc + '">' + esc(round.live ? "待裁决" : round.winner) + "</span>" +
+            '<span class="sc">' + esc(round.live ? "—" : round.score) + "</span>" +
+          "</div>" +
+        "</div>" +
+        '<div class="chips">' + renderChips(round) +
+          '<span class="grow"></span>' +
+          '<button class="expandall" data-act="expandAll">' + (state.expandAll ? "收起全部" : "展开全部") + "</button>" +
+        "</div>" +
+      "</div>" +
+      '<div class="tl"><div class="rows">' + renderEvents(round) + "</div>" + stream + "</div>" +
+    "</main>";
+}
+
+/* ---------------- 右栏 ---------------- */
+function renderConflicts(round){
+  if (!round.conflicts.length) return '<div class="empty-min">本轮还没有记录分歧</div>';
+  return round.conflicts.map(function(c){
+    var a = roleOf(c.a), b = roleOf(c.b);
+    var sev = SEV_COLORS[c.sev] || "#8B95A2";
+    var resC = c.res === "ok" ? "#63C68E" : c.res === "open" ? "#6FD3C7" : "#8B95A2";
+    return '<div class="conf">' +
+      '<div class="ch"><span class="sev" style="color:' + sev + ";background:" + sev + '1A">' + esc(c.sev) + "</span>" +
+        '<span class="tp">' + esc(c.topic) + "</span></div>" +
+      '<div class="cb">' +
+        '<div class="side"><span class="who" style="color:' + a.color + '">' + esc(a.name) + "</span>" +
+          '<span class="cl">' + esc(c.aClaim) + "</span></div>" +
+        '<div class="side"><span class="who" style="color:' + b.color + '">' + esc(b.name) + "</span>" +
+          '<span class="cl">' + esc(c.bClaim) + "</span></div>" +
+        '<div class="jd"><span class="k">JUDGE</span>' +
+          '<span class="v" style="color:' + resC + '">' + esc(c.resolution) + "</span></div>" +
+      "</div></div>";
+  }).join("");
+}
+function renderPatches(){
+  var all = [];
+  STORE.rounds.forEach(function(rd){ rd.patches.forEach(function(p){ all.push(p); }); });
+  if (!all.length) return '<div class="empty-min">还没有补丁</div>';
+  var sum = all.reduce(function(a,p){ a.add += p.add || 0; a.del += p.del || 0; return a; }, { add:0, del:0 });
+  var cur = curRound();
+  var rows = all.map(function(p){
+    var c = p.st === "ok" ? "#63C68E" : p.st === "warn" ? "#E8C468" : "#E2707A";
+    var by = roleOf(p.by);
+    var on = cur && p.round === cur.n;
+    return '<div class="pt">' +
+      '<div class="rail"><span class="n" style="color:' + (on ? PROPS.accent : "#454E5A") + '">R' + p.round + "</span>" +
+        '<span class="ln"></span></div>' +
+      '<div class="b"><div class="pcard" style="border-color:' + (on ? "#242A32" : "#1B1F26") + '">' +
+        '<div class="top"><span class="f">' + esc(p.file) + '</span><span class="grow"></span>' +
+          '<span class="a">+' + (p.add || 0) + '</span><span class="r">−' + (p.del || 0) + "</span></div>" +
+        '<div class="note">' + esc(p.note) + "</div>" +
+        '<div class="foot"><span class="by" style="color:' + by.color + '">' + esc(by.name) + "</span>" +
+          '<span class="st" style="color:' + c + ";border-color:" + c + '4D">' + esc(p.state) + "</span>" +
+          '<span class="grow"></span><span class="te">' + esc(p.tests) + "</span></div>" +
+      "</div></div>" +
+    "</div>";
+  }).join("");
+  return '<span data-total="+' + sum.add + " / −" + sum.del + '"></span>' + rows;
+}
+function renderRight(round){
+  var patches = renderPatches();
+  var m = patches.match(/data-total="([^"]*)"/);
+  return '<aside class="pane r" id="pane-r">' +
+      '<div class="blk-conf"><span class="seclab">本轮分歧点 CONFLICTS</span>' +
+        '<div class="clist">' + renderConflicts(round) + "</div></div>" +
+      '<div class="hr"></div>' +
+      '<div class="blk-patch">' +
+        '<div class="blk-head"><span class="seclab">代码演进 PATCH TRAIL</span>' +
+          '<span class="scope">' + (m ? esc(m[1]) : "") + "</span></div>" +
+        '<div class="ptrail">' + patches + "</div>" +
+      "</div>" +
+    "</aside>";
+}
+
+/* ---------------- 空状态 ---------------- */
+function renderEmpty(){
+  var port = location.port || "4610";
+  return renderHeader(null, false) +
+    '<div class="empty">' +
+      '<div class="empty-card">' +
+        "<h1>还没有事件</h1>" +
+        "<p>这个页面不存任何状态,它只是把 <code>/events</code> 这条 append-only 流 reduce 出来。" +
+        "喂第一条进去就会立刻出现在这里。</p>" +
+        '<p><a class="expandall" href="/setup" style="display:inline-block">配置并启动一次回环 →</a>' +
+        ' <span class="dim" style="margin-left:8px">加角色、定目的、设预算</span></p>' +
+        "<pre>adversarial-console --demo --live   # 或先看一遍示例回环\n\n" +
+        "curl -X POST localhost:" + esc(port) + "/events \\\n" +
+        "  -H 'content-type: application/json' \\\n" +
+        '  -d \'{"t":"run.start","session":"我的回环"}\'</pre>' +
+        '<p class="dim">事件流状态:' + (conn.state === "open" ? "已连接,等待第一条" : "未连接,正在重试") + "</p>" +
+      "</div>" +
+    "</div>";
+}
+
+/* ---------------- 挂载 ---------------- */
+var app = document.getElementById("app");
+function render(){
+  var panes = ["pane-l","pane-m","pane-r"].map(function(id){
+    var el = document.getElementById(id);
+    return { id:id, top: el ? el.scrollTop : 0,
+      atBottom: el ? (el.scrollHeight - el.scrollTop - el.clientHeight < 40) : true };
+  });
+  if (!STORE.count) { app.innerHTML = renderEmpty(); return; }
+  var round = curRound();
+  var isLive = state.mode === "live" && !!(round && round.live);
+  app.innerHTML = renderHeader(round, isLive) +
+    '<div class="shell">' + renderLeft() + renderMain(round, isLive) + renderRight(round) + "</div>";
+  panes.forEach(function(p){
+    var el = document.getElementById(p.id);
+    if (!el) return;
+    // 本来贴着底就跟着新事件走,否则守住读者原来的位置
+    el.scrollTop = (p.id === "pane-m" && p.atBottom && state.follow) ? el.scrollHeight : p.top;
+  });
+}
+var pending = false;
+function schedule(){
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(function(){ pending = false; render(); });
+}
+
+app.addEventListener("click", function(ev){
+  var btn = ev.target.closest("[data-act]");
+  if (!btn) return;
+  var v = btn.getAttribute("data-v");
+  switch (btn.getAttribute("data-act")) {
+    case "round": {
+      var n = parseInt(v, 10);
+      state.round = n;
+      var last = latestRound();
+      state.follow = !!(last && last.n === n);   // 手动挑了旧轮就别再被新事件拖走
+      break;
+    }
+    case "mode":      state.mode = v; if (v === "live") { state.round = null; state.follow = true; } break;
+    case "rank":      state.roleFilter = state.roleFilter === v ? null : v; break;
+    case "chip":      state.roleFilter = v || null; break;
+    case "expandAll": state.expandAll = !state.expandAll; break;
+    case "stopRun":
+      btn.disabled = true;
+      btn.textContent = "正在停止…";
+      fetch("/runs/stop", { method: "POST" })
+        .then(function(r){ return r.json(); })
+        .then(function(){ refreshServer(); })
+        .catch(function(){ refreshServer(); });
+      return;
+    case "toggle":    state.open[v] = !(state.open[v] !== undefined ? state.open[v]
+                        : (state.expandAll || PROPS.defaultExpanded)); break;
+    default: return;
+  }
+  render();
+});
+
+/* 事件流:EventSource 自带重连,并把 Last-Event-ID 带回去续传 */
+var es = new EventSource("/events");
+es.onopen = function(){ conn.state = "open"; schedule(); };
+es.onerror = function(){ conn.state = "retry"; schedule(); };   // 断了要看得见,不许静默
+es.onmessage = function(msg){
+  var wasFollowing = state.round == null || (latestRound() && state.round === latestRound().n);
+  try { applyEvent(JSON.parse(msg.data)); }
+  catch (e) { STORE.unknown++; console.warn("[console] 事件解析失败", e); }
+  if (wasFollowing && state.follow) state.round = null;           // 跟随最新轮
+  schedule();
+};
+render();
+refreshServer();
+
+</script>
+</body>
+</html>

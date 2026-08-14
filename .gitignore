@@ -1,0 +1,5 @@
+node_modules/
+# 事件日志是运行产物，一份日志 = 一次回环，不进版本库
+run.jsonl
+*.jsonl
+!design/**

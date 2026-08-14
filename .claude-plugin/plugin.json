@@ -1,0 +1,12 @@
+{
+  "name": "adversarial-console",
+  "version": "0.2.0",
+  "description": "对抗回环:一个角色提方案、一个专门推翻、由代码跑判据裁定,全过程直播到本地监控台。宿主自己执行,零 API key。",
+  "author": { "name": "zhangwen" },
+  "mcpServers": {
+    "adversarial-console": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.js", "--mcp"]
+    }
+  }
+}

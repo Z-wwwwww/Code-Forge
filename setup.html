@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配置对抗回环</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230A0C0F'/%3E%3Ccircle cx='5' cy='8' r='2.2' fill='%236FD3C7'/%3E%3Ccircle cx='11' cy='8' r='2.2' fill='%23E2707A'/%3E%3C/svg%3E">
+<style>
+:root{
+  --acc:#6FD3C7; --bg:#0A0C0F; --surface:#0F1216; --surface-2:#14181D; --surface-3:#0C0E12;
+  --line:#1B1F26; --line-2:#232830; --line-3:#1E242C;
+  --tx:#E6E9EE; --tx-1:#D5DBE3; --tx-3:#B6BFCA; --tx-5:#8B95A2; --tx-6:#6B7482; --tx-7:#5A6472; --tx-9:#454E5A;
+  --warn:#E8C468; --del:#E2707A; --add:#63C68E;
+  --sans:"IBM Plex Sans","Noto Sans SC",system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,"Noto Sans SC",monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;background:var(--bg)}
+body{font-family:var(--sans);color:var(--tx);-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.6}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#23282F;border-radius:9px}
+.wrap{max-width:860px;margin:0 auto;padding:40px 20px 90px;display:flex;flex-direction:column;gap:22px}
+a{color:var(--acc);text-decoration:none}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+header h1{margin:0 0 6px;font-size:24px;letter-spacing:-.02em}
+header p{margin:0;color:var(--tx-5);max-width:62ch}
+.brand{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.14em;color:var(--acc);margin-bottom:10px}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:16px 18px}
+.card > h2{margin:0 0 4px;font-size:15px;font-weight:650}
+.card > .hint{margin:0 0 14px;font-size:12.5px;color:var(--tx-6);line-height:1.6}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:1fr 1fr 1fr}
+.g4{grid-template-columns:1fr 1fr 1fr 1fr}
+@media (max-width:700px){.g2,.g3,.g4{grid-template-columns:1fr}}
+label{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--tx-7);font-weight:600}
+input,select,textarea{font-family:var(--sans);font-size:13.5px;color:var(--tx);background:var(--surface-3);
+  border:1px solid var(--line-2);border-radius:7px;padding:8px 10px;outline:none;min-width:0}
+input.mono,textarea{font-family:var(--mono);font-size:12.5px}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+textarea{resize:vertical;min-height:52px;line-height:1.55}
+.note{font-size:11.5px;color:var(--tx-9);font-family:var(--mono);text-transform:none;letter-spacing:0;font-weight:400}
+
+.role{border:1px solid var(--line);border-left:2px solid var(--acc);border-radius:9px;
+  background:var(--surface-3);padding:13px 14px;display:flex;flex-direction:column;gap:11px}
+.role .top{display:flex;align-items:center;gap:10px}
+.role .top .n{font-family:var(--mono);font-size:11px;color:var(--tx-7);font-weight:600}
+.role .top .grow{flex:1}
+.rolelist{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+
+button{font-family:inherit;cursor:pointer;border-radius:7px;font-size:13px;font-weight:600;
+  border:1px solid var(--line-2);background:var(--surface-2);color:var(--tx-3);padding:7px 13px}
+button:hover{color:var(--tx);border-color:#333A43}
+button.ghost{background:transparent;color:var(--tx-6);font-weight:500}
+button.danger:hover{color:var(--del);border-color:#E2707A55}
+button.primary{background:var(--acc);border-color:var(--acc);color:#06201C;font-size:14px;padding:10px 20px}
+button.primary:hover{filter:brightness(1.1);color:#06201C}
+button:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;bottom:0;
+  background:#0A0C0FF2;backdrop-filter:blur(8px);border-top:1px solid var(--line);
+  margin:0 -20px -90px;padding:14px 20px 20px}
+.bar .msg{font-size:12.5px;color:var(--tx-6);font-family:var(--mono)}
+.bar .msg.err{color:var(--warn)}
+.keys{font-size:11.5px;color:var(--tx-9);font-family:var(--mono)}
+.keys b{color:var(--tx-6);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">ADVERSARIAL·MCP</div>
+    <h1>配置一次对抗回环</h1>
+    <p>
+      角色按顺序发言,每轮结束由<strong>代码</strong>跑一次判据决定要不要继续 ——
+      达标与否不问模型,否则回环会停在自我肯定上。预算是硬天花板,派发前检查。
+    </p>
+  </header>
+
+  <section class="card">
+    <h2>这次回环</h2>
+    <div class="grid g3">
+      <label>名称<input id="session" value="修复回调幂等性" /></label>
+      <label>仓库<input id="repo" class="mono" placeholder="repo/payments" /></label>
+      <label>分支<input id="branch" class="mono" placeholder="fix/idem-callback" /></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>目的（判据）</h2>
+    <p class="hint">
+      一条能跑的命令 + 可选的一个数。退出码 0 且那个数落进区间 = 达标,回环立刻停。
+      <strong>留空则没有可判定的目标</strong> —— 那样只能靠预算耗尽或零进展停,页面上会如实标「未判定」。
+    </p>
+    <div class="grid g2">
+      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
+        <span class="note">在下面的工作目录里执行,退出码 0 算过</span></label>
+      <label>工作目录<input id="cwd" class="mono" placeholder="留空 = 本进程的目录" /></label>
+    </div>
+    <div class="grid g4" style="margin-top:12px">
+      <label>指标名<input id="mname" placeholder="覆盖率" /></label>
+      <label>抓取正则<input id="mpattern" class="mono" placeholder="coverage[^0-9]*(\d+)" />
+        <span class="note">第一个捕获组当数字</span></label>
+      <label>需 ≥<input id="mmin" class="mono" inputmode="decimal" placeholder="80" /></label>
+      <label>需 ≤<input id="mmax" class="mono" inputmode="decimal" placeholder="留空" /></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>限制</h2>
+    <p class="hint">每一项都是硬闸,不是建议值。到顶就停,并在页面上写清是哪一条停的。</p>
+    <div class="grid g4">
+      <label>最大 TOKEN<input id="btok" class="mono" inputmode="numeric" value="200000" /></label>
+      <label>最长时间（秒）<input id="bsec" class="mono" inputmode="numeric" value="1800" /></label>
+      <label>最多轮数<input id="brounds" class="mono" inputmode="numeric" value="6" /></label>
+      <label>零进展几轮即停<input id="bnp" class="mono" inputmode="numeric" value="2" />
+        <span class="note">指标不再往目标方向走</span></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>角色</h2>
+    <p class="hint">
+      按这个顺序发言。<code>mock</code> 不需要任何 key,用来先跑通整条回环;换成真 provider 时,
+      key 从环境变量读(见底部),<strong>不经过这个页面、也不落盘</strong>。
+    </p>
+    <div class="rolelist" id="roles"></div>
+    <button type="button" class="ghost" id="addRole">+ 再加一个角色</button>
+  </section>
+
+  <div class="bar">
+    <button type="button" class="primary" id="start">启动回环</button>
+    <button type="button" class="ghost" onclick="location.href='/'">回监控台</button>
+    <span class="msg" id="msg"></span>
+    <span class="grow" style="flex:1"></span>
+    <span class="keys" id="keys"></span>
+  </div>
+</div>
+
+<script>
+"use strict";
+var PROVIDERS = [
+  { id: "mock",       label: "mock（零 key,可先跑通）", env: null,                model: "mock" },
+  { id: "anthropic",  label: "anthropic",                env: "ANTHROPIC_API_KEY", model: "claude-opus-5" },
+  { id: "openai",     label: "openai",                   env: "OPENAI_API_KEY",    model: "gpt-5-codex" },
+  { id: "deepseek",   label: "deepseek",                 env: "DEEPSEEK_API_KEY",  model: "deepseek-chat" },
+  { id: "qwen",       label: "qwen (dashscope)",         env: "DASHSCOPE_API_KEY", model: "qwen-plus" },
+  { id: "openrouter", label: "openrouter",               env: "OPENROUTER_API_KEY",model: "openai/gpt-5-codex" },
+  { id: "ollama",     label: "ollama（本机）",           env: null,                model: "qwen2.5-coder" }
+];
+var KINDS = [
+  ["propose", "提议 PROPOSE"], ["attack", "反驳 ATTACK"], ["defend", "辩护 DEFEND"],
+  ["verdict", "裁决 VERDICT"], ["patch", "补丁 PATCH"], ["test", "测试 TEST"],
+  ["audit", "审查 AUDIT"], ["route", "分派 ROUTE"]
+];
+var COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
+
+var DEFAULTS = [
+  { name: "提议者", kind: "propose", duty: "提出最小侵入的方案,只改必要的东西", trigger: "always" },
+  { name: "反驳者", kind: "attack",  duty: "找反例,永远试着推翻上一个方案;给不出反例就明说", trigger: "always" },
+  { name: "复核者", kind: "audit",   duty: "判据判绿之后做最后一遍复核", trigger: "on_green" }
+];
+
+var roles = [];
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+  return ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c]; }); }
+
+function providerOf(id){ return PROVIDERS.filter(function(p){ return p.id === id; })[0] || PROVIDERS[0]; }
+
+function render(){
+  var host = document.getElementById("roles");
+  host.innerHTML = roles.map(function(r, i){
+    return '<div class="role" style="border-left-color:' + COLORS[i % COLORS.length] + '">' +
+      '<div class="top"><span class="n">#' + (i + 1) + '</span>' +
+        '<span class="grow"></span>' +
+        '<button type="button" class="ghost" data-act="up" data-i="' + i + '" title="上移">↑</button>' +
+        '<button type="button" class="ghost" data-act="down" data-i="' + i + '" title="下移">↓</button>' +
+        '<button type="button" class="ghost danger" data-act="del" data-i="' + i + '">删除</button></div>' +
+      '<div class="grid g3">' +
+        '<label>名称<input data-f="name" data-i="' + i + '" value="' + esc(r.name) + '" /></label>' +
+        '<label>档位<select data-f="kind" data-i="' + i + '">' + KINDS.map(function(k){
+          return '<option value="' + k[0] + '"' + (r.kind === k[0] ? " selected" : "") + '>' + k[1] + '</option>';
+        }).join("") + '</select></label>' +
+        '<label>何时发言<select data-f="trigger" data-i="' + i + '">' +
+          '<option value="always"' + (r.trigger === "always" ? " selected" : "") + '>每轮</option>' +
+          '<option value="on_green"' + (r.trigger === "on_green" ? " selected" : "") + '>仅判据判绿后</option>' +
+        '</select></label>' +
+      '</div>' +
+      '<label>职责（进 system 提示词）<textarea data-f="duty" data-i="' + i + '">' + esc(r.duty) + '</textarea></label>' +
+      '<div class="grid g3">' +
+        '<label>PROVIDER<select data-f="provider" data-i="' + i + '">' + PROVIDERS.map(function(p){
+          return '<option value="' + p.id + '"' + (r.provider === p.id ? " selected" : "") + '>' + esc(p.label) + '</option>';
+        }).join("") + '</select></label>' +
+        '<label>模型<input data-f="model" data-i="' + i + '" class="mono" value="' + esc(r.model) + '" /></label>' +
+        '<label>BASE URL（自定义网关才填）<input data-f="baseUrl" data-i="' + i + '" class="mono" value="' + esc(r.baseUrl || "") + '" placeholder="留空 = 用内置地址" /></label>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+  renderKeys();
+}
+
+function renderKeys(){
+  var need = {};
+  roles.forEach(function(r){ var p = providerOf(r.provider); if (p.env) need[p.env] = true; });
+  var list = Object.keys(need);
+  document.getElementById("keys").innerHTML = list.length
+    ? "需要的环境变量：<b>" + list.join("</b> <b>") + "</b>（起服务的那个终端里设）"
+    : "当前全是 mock,不需要任何 key。";
+}
+
+function addRole(seed){
+  var i = roles.length;
+  var p = providerOf("mock");
+  roles.push(Object.assign({
+    name: "角色 " + (i + 1), kind: "propose", duty: "", trigger: "always",
+    provider: "mock", model: p.model, baseUrl: ""
+  }, seed || {}));
+  render();
+}
+
+document.getElementById("roles").addEventListener("input", function(ev){
+  var el = ev.target;
+  var i = el.getAttribute("data-i"), f = el.getAttribute("data-f");
+  if (i == null || !f) return;
+  roles[+i][f] = el.value;
+  if (f === "provider") {
+    // 换 provider 顺手把模型名换成该家的默认值,免得留着上一家的名字发错地方
+    roles[+i].model = providerOf(el.value).model;
+    render();
+  }
+  if (f === "provider" || f === "model") renderKeys();
+});
+document.getElementById("roles").addEventListener("click", function(ev){
+  var btn = ev.target.closest("[data-act]");
+  if (!btn) return;
+  var i = +btn.getAttribute("data-i");
+  var act = btn.getAttribute("data-act");
+  if (act === "del") roles.splice(i, 1);
+  if (act === "up" && i > 0) roles.splice(i - 1, 0, roles.splice(i, 1)[0]);
+  if (act === "down" && i < roles.length - 1) roles.splice(i + 1, 0, roles.splice(i, 1)[0]);
+  render();
+});
+document.getElementById("addRole").addEventListener("click", function(){ addRole(); });
+
+function num(id){
+  var v = document.getElementById(id).value.trim();
+  return v === "" ? null : Number(v);
+}
+function str(id){ return document.getElementById(id).value.trim(); }
+
+document.getElementById("start").addEventListener("click", async function(){
+  var btn = this, msg = document.getElementById("msg");
+  var cfg = {
+    session: str("session") || "未命名回环",
+    repo: str("repo"), branch: str("branch"),
+    client: "setup page",
+    goal: {
+      command: str("cmd"),
+      cwd: str("cwd") || null,
+      metric: str("mpattern") ? {
+        name: str("mname") || "指标",
+        pattern: str("mpattern"),
+        min: num("mmin"), max: num("mmax")
+      } : null
+    },
+    budget: {
+      tokens: num("btok") || 200000, seconds: num("bsec") || 1800,
+      rounds: num("brounds") || 6, noProgressRounds: num("bnp") || 2
+    },
+    roles: roles.map(function(r){
+      return {
+        name: r.name, duty: r.duty, kind: r.kind, trigger: r.trigger,
+        provider: r.provider, model: r.model, baseUrl: r.baseUrl || null
+      };
+    })
+  };
+  if (!cfg.roles.length) { msg.className = "msg err"; msg.textContent = "至少要有一个角色。"; return; }
+  if (!cfg.goal.command) {
+    // 不拦,但必须明说后果 —— 静默接受一个判不出达标的目标才是坏的
+    if (!confirm("没填判据命令：这次回环没有可判定的目标,只能靠预算耗尽或零进展停止。继续吗？")) return;
+  }
+  btn.disabled = true;
+  msg.className = "msg";
+  msg.textContent = "正在启动…";
+  try {
+    var res = await fetch("/runs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg)
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    location.href = "/";
+  } catch (err) {
+    btn.disabled = false;
+    msg.className = "msg err";
+    msg.textContent = "启动失败：" + err.message;
+  }
+});
+
+DEFAULTS.forEach(function(d){ addRole(d); });
+</script>
+</body>
+</html>

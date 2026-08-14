@@ -1,0 +1,35 @@
+{
+  "name": "adversarial-console",
+  "version": "0.2.0",
+  "description": "对抗回环插件:宿主 agent 自己执行(零 key),判定与预算交给代码,过程直播到本地监控台",
+  "bin": {
+    "adversarial-console": "server.js"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "mcp": "node server.js --mcp",
+    "demo": "node server.js --reset --demo --live",
+    "test": "node test-host.js && node test.js"
+  },
+  "files": [
+    "server.js",
+    "hostrun.js",
+    "loop.js",
+    "gate.js",
+    "providers.js",
+    "mcp.js",
+    "demo.js",
+    "index.html",
+    "setup.html",
+    "skills",
+    "commands",
+    ".claude-plugin",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "license": "MIT"
+}
