@@ -54,7 +54,11 @@ if (flag("help") || flag("h")) {
 
 // MCP 模式:只跑 stdio server,不起 HTTP、不碰日志文件
 if (flag("mcp")) {
-  require("./mcp.js").serve({ url: opt("url", "http://localhost:4610") });
+  // ⚠ 这里**不能给默认值**。mcp.js 把「传了 url」理解为「你自己指定了地址」,
+  // 于是同时关掉两件事:按环境变量/端口文件发现监控台、以及连不上时自动拉起。
+  // 之前这里写了 opt("url","http://localhost:4610"),结果永远认死 4610 ——
+  // 监控台在别的端口时 agent 只会说「监控台没起来」(实测)。
+  require("./mcp.js").serve({ url: opt("url", null) });
   return;
 }
 
@@ -155,6 +159,9 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && (url.pathname === "/setup" || url.pathname === "/setup.html")) {
     return sendFile(res, "setup.html");
   }
+  if (req.method === "GET" && (url.pathname === "/setup-local" || url.pathname === "/setup-local.html")) {
+    return sendFile(res, "setup-local.html");   // 自带 key 的那套（可选模式）
+  }
 
   /* ---- 宿主驱动模式:宿主 agent 自己出模型,这里只管判定与记账 ---- */
   if (url.pathname === "/host/begin" && req.method === "POST") {
@@ -182,6 +189,36 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === "/host/status" && req.method === "GET") {
     return json(res, 200, host.status());
+  }
+
+  /* ---- 页面点 Run:起一个 headless Claude Code 来跑（零 key,用你的订阅）---- */
+  if (url.pathname === "/agent/run" && req.method === "POST") {
+    return readJson(req, res, (cfg) => {
+      if (!cfg || !Array.isArray(cfg.roles) || !cfg.roles.length) {
+        return json(res, 400, { error: "至少要有一个角色" });
+      }
+      if (host.isActive() || run.active) {
+        return json(res, 409, { error: "已有回环在进行中,先停止它" });
+      }
+      let preset = null;
+      // 存预设失败不该拦住开跑,只是少一份可复用的配置
+      try { preset = agentrun.savePreset(cfg); } catch (e) { preset = null; }
+      const r = agent.start(cfg);
+      json(res, r.error ? 409 : 200, Object.assign({ preset: preset }, r));
+    });
+  }
+  if (url.pathname === "/agent/stop" && req.method === "POST") {
+    const r = agent.stop();
+    // agent 进程停了,回环状态也要收口 —— 否则「在跑」与「没进程」会长期矛盾
+    if (!r.error && host.isActive()) host.end("stopped", "从页面停止 agent");
+    return json(res, r.error ? 409 : 200, r);
+  }
+  if (url.pathname === "/agent/status" && req.method === "GET") {
+    return json(res, 200, Object.assign({}, agent.status(), { loop: host.status() }));
+  }
+  if (url.pathname === "/agent/prompt" && req.method === "POST") {
+    // 只拼提示词不开跑 —— 想自己贴回聊天里的人用这条,零风险
+    return readJson(req, res, (cfg) => json(res, 200, { prompt: agentrun.buildPrompt(cfg || {}) }));
   }
 
   // 起一次回环。一本书至多一个在跑的回环 —— 两个 driver 往同一条流里写就分不清谁说的
@@ -236,6 +273,11 @@ const server = http.createServer((req, res) => {
 /* ---------------- 小工具 ---------------- */
 const run = { active: false, ctl: null, startedAt: 0, lastReason: null };   // 本地驱动(自带 key,可选)
 const host = require("./hostrun.js").create(append);                        // 宿主驱动(默认,零 key)
+const agentrun = require("./agentrun.js");
+// 自己的地址要能传给页面起的那个 claude —— 它拉起的 MCP server 继承这个环境变量,
+// 于是两边一定指向同一个监控台(端口被占用自动 +1 的情况下尤其要紧)
+let SELF_URL = null;
+const agent = agentrun.create(append, () => SELF_URL);                      // 页面点 Run 起的 headless agent
 
 function json(res, code, obj) {
   res.writeHead(code, { "content-type": "application/json; charset=utf-8" })
@@ -271,8 +313,26 @@ function open(url) {
   try { spawn(cmd[0], cmd[1], { detached: true, stdio: "ignore" }).unref(); } catch (_) {}
 }
 
+/**
+ * 把自己的真实端口写下来,让 MCP server 找得到。
+ * 4610 被占用时 listen() 会自动 +1,而 MCP server 那侧原本写死 4610 ——
+ * 少了这个文件,两边就会静默指向不同的监控台(实测踩过:agent 报「监控台没起来」)。
+ */
+function writePortFile(port) {
+  const f = path.join(require("os").tmpdir(), "code-forge-port.json");
+  try {
+    fs.writeFileSync(f, JSON.stringify({ port: port, pid: process.pid, startedAt: Date.now() }) + "\n");
+    const clean = () => { try { fs.unlinkSync(f); } catch (_) {} };
+    process.on("exit", clean);
+    process.on("SIGINT", () => { clean(); process.exit(0); });
+    process.on("SIGTERM", () => { clean(); process.exit(0); });
+  } catch (_) { /* 写不下只是少一层发现机制,不该拦住启动 */ }
+}
+
 function ready(port) {
   const url = "http://localhost:" + port;
+  SELF_URL = url;
+  writePortFile(port);
   console.log("对抗编程监控台  " + url);
   console.log("事件日志        " + LOG_FILE + "  (" + log.length + " 条)");
   console.log("喂事件          POST " + url + "/events");

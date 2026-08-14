@@ -338,6 +338,36 @@ function testPackaging() {
   });
   ok("AGENTS.md 给了 Codex / opencode 的接法与纯 HTTP 兜底");
 
+  // ---- 页面点 Run（headless agent）----
+  const ar = fs.readFileSync(path.join(__dirname, "agentrun.js"), "utf8");
+  // ★ 提示词必须走 stdin。Windows 上要 shell:true 才起得动 claude.cmd,而 shell 会把
+  //   多行提示词切碎（实测:agent 只收到了第一个字「用」）。argv 里再出现提示词就是回归。
+  assert.ok(ar.indexOf("child.stdin.write(prompt)") >= 0, "提示词必须写进 stdin");
+  const argsLine = /const args = \[[^\]]*\]/.exec(ar)[0];
+  assert.ok(argsLine.indexOf("prompt") < 0, "argv 里不许出现 prompt（shell 会切碎它）");
+  ok("★ 提示词走 stdin,不进 argv（Windows shell 会切碎多行参数）");
+
+  // 非交互模式没人能点确认 —— 五个回环工具与只读工具必须预先放行
+  ["loop_begin", "loop_say", "loop_gate", "loop_status", "loop_end"].forEach(function (t) {
+    assert.ok(ar.indexOf("mcp__code-forge__" + t) >= 0, "必须预先放行 " + t);
+  });
+  assert.ok(ar.indexOf("--allowedTools") >= 0, "要用 --allowedTools 精确放行,而不是整体放开");
+  ok("回环工具预先放行（否则 headless 下卡在「等待权限授予中」）");
+
+  // ★ --url 不许有默认值:mcp.js 把「传了 url」当成「别发现、别自动拉起」
+  const srv = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  assert.ok(srv.indexOf('serve({ url: opt("url", null) })') >= 0,
+    "server.js 给 --url 传默认值会永久锁死 4610");
+  ok("★ --url 无默认值（否则端口发现与自动拉起一起失效）");
+
+  // 端口文件:4610 被占用会自动 +1,两边必须还能找到彼此
+  const mcpSrc = fs.readFileSync(path.join(__dirname, "mcp.js"), "utf8");
+  assert.ok(srv.indexOf("code-forge-port.json") >= 0 && mcpSrc.indexOf("code-forge-port.json") >= 0,
+    "监控台要写端口文件,MCP 要读它");
+  assert.ok(mcpSrc.indexOf("CODE_FORGE_URL") >= 0 && ar.indexOf("CODE_FORGE_URL") >= 0,
+    "页面起的 agent 要把监控台地址传给它拉起的 MCP server");
+  ok("端口/地址两侧都对得上（监控台换端口时仍能对上）");
+
   // ---- 多角色多模型 ----
   const dir = path.join(__dirname, "agents");
   const files = fs.readdirSync(dir).filter(function (f) { return f.endsWith(".md"); });

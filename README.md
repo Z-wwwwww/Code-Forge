@@ -38,7 +38,27 @@ MCP: claude mcp add --scope user code-forge
 两条路等价,别同时用(会装两份技能)。其它宿主(Codex / opencode / 任何支持 stdio MCP 的)
 见 **`AGENTS.md`**。第一次用时监控台**自动拉起并打开浏览器**。
 
-## 用
+## 用:两条路
+
+### ① 页面上填完,点 Run
+
+```
+code-forge          # 起监控台（第一次用 MCP 时也会自动拉起）
+# 浏览器打开 http://localhost:4610/setup
+```
+
+在 `/setup` 里填**目标 / 判据命令 / 限制 / 角色 / 权限**,点 **Run** —— 后台起一个
+headless Claude Code(`claude -p`)当执行者,用你自己的订阅,**不需要 key**。页面上能看到它
+一步步在干什么,监控台里是完整的轮次档案。配置同时存成工作目录下的 `.code-forge.json`,下次可复用。
+
+不想让它自动跑?点 **只生成指令**,把那段话复制到你自己的 Claude Code 会话里粘上 —— 权限还是你现场点。
+
+⚠ **权限那一栏要按仓库可信度选**:`auto`(推荐,由 Claude Code 的安全判定放行常规操作)/
+`acceptEdits`(自动接受文件编辑,但 Bash 仍需批准 —— 无人值守时会卡住)/
+`bypassPermissions`(**危险**:能改任何文件、跑任何命令,没人拦)。
+回环自己的五个工具与只读工具是**预先精确放行**的,其余一律按你选的模式走。
+
+### ② 在聊天里说一句
 
 ```
 /code-forge 把 payments/webhook 的重复回调修掉，pytest 全绿且覆盖率 ≥ 80%
@@ -118,7 +138,7 @@ loop_begin  → 开局，浏览器弹出监控台
 
 ```
 code-forge            # 起监控台
-# 打开 http://localhost:4610/setup 配角色（provider + 模型）→ 启动
+# 打开 http://localhost:4610/setup-local 配角色（provider + 模型）→ 启动
 ```
 
 provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen` / `openrouter` / `ollama`,
@@ -128,8 +148,8 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 38 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
-node test.js         # 28 项：本地驱动模式（可选）
+node test-host.js    # 42 项：宿主驱动（默认模式）+ MCP 全链路 + 插件包装
+node test.js         # 29 项：本地驱动模式（可选）
 ```
 
 零 key、不联网、不发一次模型调用。钉住的都是**会静默出错**的那几条:自称达标必须被拒、
@@ -139,6 +159,7 @@ node test.js         # 28 项：本地驱动模式（可选）
 
 ```
 install.js                         一条命令接入 Claude Code（幂等 / --dry-run / --uninstall）
+agentrun.js                        页面点 Run：拼提示词 + 起 headless claude -p + 解 stream-json
 skills/code-forge/SKILL.md   技能：协议 + 三条纪律（给 agent 读的那份）
 agents/forge-proposer|critic|reviewer.md  三个角色，各绑不同模型与工具集
 commands/code-forge.toml     /code-forge 斜杠命令（插件版）
@@ -150,7 +171,8 @@ hostrun.js    宿主驱动的状态机：begin/say/gate/end，以及那条拒绝
 gate.js       判据（全代码）：命令退出码 + 可选指标区间
 server.js     HTTP + SSE + append-only 日志；--mcp 时转 stdio
 index.html    监控台（reducer + 渲染）
-setup.html    本地驱动模式的配置页
+setup.html    Run 页（填完点 Run，宿主执行）
+setup-local.html  自带 key 那套的配置页（可选模式）
 
 loop.js       本地驱动（可选）：自带 key 时的回环驱动
 providers.js  本地驱动（可选）：mock / anthropic / OpenAI 兼容各家
@@ -164,9 +186,10 @@ run.jsonl     运行产物（已 gitignore）
 | 接口 | 用途 |
 |---|---|
 | `POST /host/begin` `\|` `/host/say` `\|` `/host/gate` `\|` `/host/end`, `GET /host/status` | 宿主驱动协议 |
-| `GET /` `/setup` | 监控台 / 配置页 |
+| `GET /` `/setup` `/setup-local` | 监控台 / Run 页 / 自带 key 的配置页 |
 | `GET /events?since=N` | SSE;浏览器重连自动带 `Last-Event-ID` 续传 |
 | `POST /events` | 直接写事件(任何工具链都能往里报) |
+| `POST /agent/run` `/agent/stop` `/agent/prompt`, `GET /agent/status` | 页面点 Run：起/停 headless agent、只拼提示词、看进度 |
 | `POST /runs` `/runs/stop` | 本地驱动模式的起/停 |
 | `GET /health` | 事件数、客户端数、回环状态 |
 

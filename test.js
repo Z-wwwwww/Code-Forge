@@ -294,10 +294,18 @@ function testHttp() {
         assert.strictEqual(lines.filter(function (e) { return e.t === "run.end"; }).pop().reason, "stopped");
         ok("事件全部落盘,停止原因写进 run.end");
 
+        // /setup 现在是「填完点 Run」的宿主模式页;自带 key 的这套搬到 /setup-local
         const setup = await fetch(base + "/setup");
         assert.strictEqual(setup.status, 200);
-        assert.ok(/配置一次对抗回环/.test(await setup.text()));
-        ok("GET /setup 托出配置页");
+        const setupHtml = await setup.text();
+        assert.ok(/配置并启动对抗回环/.test(setupHtml), "/setup 应是 Run 页");
+        assert.ok(/id="run"/.test(setupHtml), "Run 页得有 Run 按钮");
+        ok("GET /setup 托出 Run 页（宿主执行,零 key）");
+
+        const local = await fetch(base + "/setup-local");
+        assert.strictEqual(local.status, 200);
+        assert.ok(/本地驱动/.test(await local.text()), "/setup-local 应是自带 key 那套");
+        ok("GET /setup-local 托出本地驱动配置页");
 
         child.kill();
         try { fs.unlinkSync(logFile); } catch (_) {}

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>配置对抗回环</title>
+<title>配置并启动对抗回环</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230A0C0F'/%3E%3Ccircle cx='5' cy='8' r='2.2' fill='%236FD3C7'/%3E%3Ccircle cx='11' cy='8' r='2.2' fill='%23E2707A'/%3E%3C/svg%3E">
 <style>
 :root{
   --acc:#6FD3C7; --bg:#0A0C0F; --surface:#0F1216; --surface-2:#14181D; --surface-3:#0C0E12;
-  --line:#1B1F26; --line-2:#232830; --line-3:#1E242C;
-  --tx:#E6E9EE; --tx-1:#D5DBE3; --tx-3:#B6BFCA; --tx-5:#8B95A2; --tx-6:#6B7482; --tx-7:#5A6472; --tx-9:#454E5A;
+  --line:#1B1F26; --line-2:#232830;
+  --tx:#E6E9EE; --tx-3:#B6BFCA; --tx-5:#8B95A2; --tx-6:#6B7482; --tx-7:#5A6472; --tx-9:#454E5A;
   --warn:#E8C468; --del:#E2707A; --add:#63C68E;
   --sans:"IBM Plex Sans","Noto Sans SC",system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Consolas,"Noto Sans SC",monospace;
@@ -19,92 +19,112 @@ html,body{margin:0;background:var(--bg)}
 body{font-family:var(--sans);color:var(--tx);-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.6}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:#23282F;border-radius:9px}
-.wrap{max-width:860px;margin:0 auto;padding:40px 20px 90px;display:flex;flex-direction:column;gap:22px}
+.wrap{max-width:900px;margin:0 auto;padding:36px 20px 120px;display:flex;flex-direction:column;gap:18px}
 a{color:var(--acc);text-decoration:none}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.grow{flex:1}
 
-header h1{margin:0 0 6px;font-size:24px;letter-spacing:-.02em}
-header p{margin:0;color:var(--tx-5);max-width:62ch}
-.brand{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.14em;color:var(--acc);margin-bottom:10px}
+header .brand{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.14em;color:var(--acc);margin-bottom:8px}
+header h1{margin:0 0 6px;font-size:23px;letter-spacing:-.02em}
+header p{margin:0;color:var(--tx-5);max-width:64ch}
 
-.card{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:16px 18px}
-.card > h2{margin:0 0 4px;font-size:15px;font-weight:650}
-.card > .hint{margin:0 0 14px;font-size:12.5px;color:var(--tx-6);line-height:1.6}
-.grid{display:grid;gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:15px 17px}
+.card > h2{margin:0 0 4px;font-size:14.5px;font-weight:650;display:flex;align-items:center;gap:8px}
+.card > h2 .tag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--tx-7);
+  border:1px solid var(--line-2);border-radius:999px;padding:1px 7px;font-weight:500}
+.card > .hint{margin:0 0 13px;font-size:12.5px;color:var(--tx-6);line-height:1.6}
+.grid{display:grid;gap:11px}
 .g2{grid-template-columns:1fr 1fr}
 .g3{grid-template-columns:1fr 1fr 1fr}
 .g4{grid-template-columns:1fr 1fr 1fr 1fr}
-@media (max-width:700px){.g2,.g3,.g4{grid-template-columns:1fr}}
+@media (max-width:720px){.g2,.g3,.g4{grid-template-columns:1fr}}
 label{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.06em;
   text-transform:uppercase;color:var(--tx-7);font-weight:600}
 input,select,textarea{font-family:var(--sans);font-size:13.5px;color:var(--tx);background:var(--surface-3);
   border:1px solid var(--line-2);border-radius:7px;padding:8px 10px;outline:none;min-width:0}
 input.mono,textarea{font-family:var(--mono);font-size:12.5px}
 input:focus,select:focus,textarea:focus{border-color:var(--acc)}
-textarea{resize:vertical;min-height:52px;line-height:1.55}
+textarea{resize:vertical;min-height:48px;line-height:1.55}
 .note{font-size:11.5px;color:var(--tx-9);font-family:var(--mono);text-transform:none;letter-spacing:0;font-weight:400}
 
 .role{border:1px solid var(--line);border-left:2px solid var(--acc);border-radius:9px;
-  background:var(--surface-3);padding:13px 14px;display:flex;flex-direction:column;gap:11px}
-.role .top{display:flex;align-items:center;gap:10px}
+  background:var(--surface-3);padding:12px 13px;display:flex;flex-direction:column;gap:10px}
+.role .top{display:flex;align-items:center;gap:9px}
 .role .top .n{font-family:var(--mono);font-size:11px;color:var(--tx-7);font-weight:600}
-.role .top .grow{flex:1}
-.rolelist{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.rolelist{display:flex;flex-direction:column;gap:9px;margin-bottom:11px}
 
 button{font-family:inherit;cursor:pointer;border-radius:7px;font-size:13px;font-weight:600;
-  border:1px solid var(--line-2);background:var(--surface-2);color:var(--tx-3);padding:7px 13px}
+  border:1px solid var(--line-2);background:var(--surface-2);color:var(--tx-3);padding:7px 12px}
 button:hover{color:var(--tx);border-color:#333A43}
 button.ghost{background:transparent;color:var(--tx-6);font-weight:500}
 button.danger:hover{color:var(--del);border-color:#E2707A55}
-button.primary{background:var(--acc);border-color:var(--acc);color:#06201C;font-size:14px;padding:10px 20px}
-button.primary:hover{filter:brightness(1.1);color:#06201C}
-button:disabled{opacity:.5;cursor:not-allowed}
+button.run{background:var(--acc);border-color:var(--acc);color:#06201C;font-size:15px;padding:11px 26px;font-weight:700}
+button.run:hover{filter:brightness(1.1);color:#06201C}
+button.stop{background:#2A1618;border-color:#E2707A55;color:#E2707A}
+button:disabled{opacity:.45;cursor:not-allowed}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 
-.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;bottom:0;
-  background:#0A0C0FF2;backdrop-filter:blur(8px);border-top:1px solid var(--line);
-  margin:0 -20px -90px;padding:14px 20px 20px}
-.bar .msg{font-size:12.5px;color:var(--tx-6);font-family:var(--mono)}
-.bar .msg.err{color:var(--warn)}
-.keys{font-size:11.5px;color:var(--tx-9);font-family:var(--mono)}
-.keys b{color:var(--tx-6);font-weight:600}
+.radios{display:flex;flex-direction:column;gap:9px}
+.radio{display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--line-2);
+  border-radius:8px;background:var(--surface-3);cursor:pointer;text-transform:none;letter-spacing:0;
+  font-size:13px;font-weight:400;color:var(--tx-3)}
+.radio:hover{border-color:#333A43}
+.radio.on{border-color:var(--acc);background:#6FD3C70D}
+.radio.risky.on{border-color:var(--del);background:#E2707A0D}
+.radio input{margin:3px 0 0;accent-color:var(--acc)}
+.radio b{color:var(--tx);font-weight:650;display:block;font-size:13px}
+.radio i{color:var(--tx-6);font-size:12px;line-height:1.55;font-style:normal;display:block}
+.radio .dg{color:var(--del)}
+
+.bar{position:fixed;left:0;right:0;bottom:0;background:#0A0C0FF5;backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);padding:13px 20px;z-index:5}
+.bar .inner{max-width:900px;margin:0 auto;display:flex;align-items:center;gap:13px;width:100%;flex-wrap:wrap}
+.msg{font-size:12.5px;color:var(--tx-6);font-family:var(--mono)}
+.msg.err{color:var(--warn)} .msg.ok{color:var(--add)}
+
+.live{border:1px solid var(--line);border-radius:9px;background:var(--surface-3);overflow:hidden}
+.live .lh{display:flex;align-items:center;gap:9px;padding:8px 11px;border-bottom:1px solid var(--line);
+  background:var(--surface-2);font-family:var(--mono);font-size:11px;color:var(--tx-6)}
+.live .dot{width:7px;height:7px;border-radius:50%;background:var(--tx-9);flex:none}
+.live .dot.on{background:var(--acc);animation:p 1.4s ease-in-out infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.live .dot.on{animation:none}}
+.live pre{margin:0;padding:10px 11px;max-height:230px;overflow:auto;font-family:var(--mono);
+  font-size:11.5px;line-height:1.7;color:var(--tx-3);white-space:pre-wrap}
+.hide{display:none}
+.promptbox textarea{width:100%;min-height:160px}
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header>
-    <div class="brand">ADVERSARIAL·MCP</div>
-    <h1>配置一次对抗回环</h1>
+    <div class="brand">CODE-FORGE</div>
+    <h1>配置并启动对抗回环</h1>
     <p>
-      角色按顺序发言,每轮结束由<strong>代码</strong>跑一次判据决定要不要继续 ——
-      达标与否不问模型,否则回环会停在自我肯定上。预算是硬天花板,派发前检查。
+      填完点 <strong>Run</strong> 就开跑:后台起一个 Claude Code(<code class="mono">claude -p</code>)当执行者,
+      用你自己的订阅 —— <strong>不需要任何 API key</strong>。达标与否由代码跑判据裁定,不问模型。
     </p>
   </header>
 
   <section class="card">
-    <h2>这次回环</h2>
-    <div class="grid g3">
-      <label>名称<input id="session" value="修复回调幂等性" /></label>
-      <label>仓库<input id="repo" class="mono" placeholder="repo/payments" /></label>
-      <label>分支<input id="branch" class="mono" placeholder="fix/idem-callback" /></label>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>目的（判据）</h2>
+    <h2>目标 <span class="tag">判据由代码跑</span></h2>
     <p class="hint">
-      一条能跑的命令 + 可选的一个数。退出码 0 且那个数落进区间 = 达标,回环立刻停。
-      <strong>留空则没有可判定的目标</strong> —— 那样只能靠预算耗尽或零进展停,页面上会如实标「未判定」。
+      一句话说清要做什么,再给一条<strong>能跑的命令</strong>当判据:退出码 0 且(可选)指标落进区间 = 达标,立刻停。
+      判据留空也能跑,但那次回环<strong>判不出达标</strong>,只能靠轮数/时限停 —— 页面会如实标「未判定」。
     </p>
-    <div class="grid g2">
-      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
-        <span class="note">在下面的工作目录里执行,退出码 0 算过</span></label>
-      <label>工作目录<input id="cwd" class="mono" placeholder="留空 = 本进程的目录" /></label>
+    <div class="grid">
+      <label>要做什么<textarea id="task" placeholder="把 payments/webhook 的重复回调修掉，不要动对外接口"></textarea></label>
     </div>
-    <div class="grid g4" style="margin-top:12px">
+    <div class="grid g2" style="margin-top:11px">
+      <label>判据命令<input id="cmd" class="mono" placeholder="pytest -q" />
+        <span class="note">在下面这个目录里执行,退出码 0 算过</span></label>
+      <label>工作目录<input id="cwd" class="mono" placeholder="留空 = 监控台进程所在目录" />
+        <span class="note">agent 会在这个目录里干活</span></label>
+    </div>
+    <div class="grid g4" style="margin-top:11px">
       <label>指标名<input id="mname" placeholder="覆盖率" /></label>
-      <label>抓取正则<input id="mpattern" class="mono" placeholder="coverage[^0-9]*(\d+)" />
+      <label>抓取正则<input id="mpattern" class="mono" placeholder="coverage[^0-9]*([0-9]+)" />
         <span class="note">第一个捕获组当数字</span></label>
       <label>需 ≥<input id="mmin" class="mono" inputmode="decimal" placeholder="80" /></label>
       <label>需 ≤<input id="mmax" class="mono" inputmode="decimal" placeholder="留空" /></label>
@@ -112,197 +132,229 @@ button:disabled{opacity:.5;cursor:not-allowed}
   </section>
 
   <section class="card">
-    <h2>限制</h2>
-    <p class="hint">每一项都是硬闸,不是建议值。到顶就停,并在页面上写清是哪一条停的。</p>
-    <div class="grid g4">
-      <label>最大 TOKEN<input id="btok" class="mono" inputmode="numeric" value="200000" /></label>
-      <label>最长时间（秒）<input id="bsec" class="mono" inputmode="numeric" value="1800" /></label>
+    <h2>限制 <span class="tag">硬闸</span></h2>
+    <p class="hint">到顶就停,页面会写清是哪一条停的。宿主执行时 token 在你订阅账上、数不到,所以这里只有轮数与时间。</p>
+    <div class="grid g3">
       <label>最多轮数<input id="brounds" class="mono" inputmode="numeric" value="6" /></label>
+      <label>最长时间（秒）<input id="bsec" class="mono" inputmode="numeric" value="1800" /></label>
       <label>零进展几轮即停<input id="bnp" class="mono" inputmode="numeric" value="2" />
         <span class="note">指标不再往目标方向走</span></label>
     </div>
   </section>
 
   <section class="card">
-    <h2>角色</h2>
+    <h2>角色 <span class="tag">各绑不同模型</span></h2>
     <p class="hint">
-      按这个顺序发言。<code>mock</code> 不需要任何 key,用来先跑通整条回环;换成真 provider 时,
-      key 从环境变量读(见底部),<strong>不经过这个页面、也不落盘</strong>。
+      按这个顺序发言。反驳者派给 <code class="mono">forge-critic</code> —— 它在<strong>工具层面</strong>就没有写权限,
+      一个能顺手把问题抹平的反驳者等于没有反驳者。
     </p>
     <div class="rolelist" id="roles"></div>
     <button type="button" class="ghost" id="addRole">+ 再加一个角色</button>
   </section>
 
-  <div class="bar">
-    <button type="button" class="primary" id="start">启动回环</button>
-    <button type="button" class="ghost" onclick="location.href='/'">回监控台</button>
-    <span class="msg" id="msg"></span>
-    <span class="grow" style="flex:1"></span>
-    <span class="keys" id="keys"></span>
-  </div>
+  <section class="card">
+    <h2>权限 <span class="tag">agent 能动到什么</span></h2>
+    <p class="hint">它要改文件、跑测试才干得成活。这一栏决定它需不需要有人点确认 —— 无人值守就得放开,请按仓库可信度选。</p>
+    <div class="radios" id="perm"></div>
+    <div class="grid g2" style="margin-top:12px">
+      <label>协调者模型<select id="model">
+        <option value="">默认（跟随你的 Claude Code 设置）</option>
+        <option value="opus">opus</option><option value="sonnet">sonnet</option>
+        <option value="haiku">haiku</option><option value="fable">fable</option>
+      </select><span class="note">各角色的模型在上面单独选</span></label>
+      <label>补充说明（可选）<input id="note" placeholder="例如：不要动公开 API；先复现再修" /></label>
+    </div>
+  </section>
+
+  <section class="card hide" id="livecard">
+    <h2>运行中 <span class="tag" id="livemode"></span></h2>
+    <div class="live">
+      <div class="lh"><span class="dot" id="livedot"></span><span id="livetitle">等待…</span>
+        <span class="grow"></span><a href="/" target="_blank">打开监控台 →</a></div>
+      <pre id="livelog"></pre>
+    </div>
+  </section>
+
+  <section class="card hide" id="promptcard">
+    <h2>指令（自己贴回聊天）</h2>
+    <p class="hint">不想让它自动跑就用这个:复制下面这段,粘到你的 Claude Code 会话里。权限还是你现场点。</p>
+    <div class="promptbox"><textarea id="promptout" class="mono" readonly></textarea></div>
+    <button type="button" class="ghost" id="copyPrompt" style="margin-top:9px">复制</button>
+  </section>
 </div>
+
+<div class="bar"><div class="inner">
+  <button type="button" class="run" id="run">Run</button>
+  <button type="button" class="stop hide" id="stop">停止</button>
+  <button type="button" class="ghost" id="genPrompt">只生成指令</button>
+  <button type="button" class="ghost" onclick="location.href='/'">监控台</button>
+  <span class="msg" id="msg"></span>
+  <span class="grow"></span>
+  <span class="msg">零 key · 用你的 Claude Code 订阅 · <a href="/setup-local">自带 key 的模式</a></span>
+</div></div>
 
 <script>
 "use strict";
-var PROVIDERS = [
-  { id: "mock",       label: "mock（零 key,可先跑通）", env: null,                model: "mock" },
-  { id: "anthropic",  label: "anthropic",                env: "ANTHROPIC_API_KEY", model: "claude-opus-5" },
-  { id: "openai",     label: "openai",                   env: "OPENAI_API_KEY",    model: "gpt-5-codex" },
-  { id: "deepseek",   label: "deepseek",                 env: "DEEPSEEK_API_KEY",  model: "deepseek-chat" },
-  { id: "qwen",       label: "qwen (dashscope)",         env: "DASHSCOPE_API_KEY", model: "qwen-plus" },
-  { id: "openrouter", label: "openrouter",               env: "OPENROUTER_API_KEY",model: "openai/gpt-5-codex" },
-  { id: "ollama",     label: "ollama（本机）",           env: null,                model: "qwen2.5-coder" }
+var PERMS = [
+  { id:"auto", title:"auto（推荐）", desc:"由 Claude Code 的安全判定自动放行常规操作，可疑的仍会拦。", risky:false },
+  { id:"acceptEdits", title:"acceptEdits", desc:"自动接受文件编辑；Bash 等仍需批准 —— 无人值守时很可能卡在那儿不动。", risky:false },
+  { id:"bypassPermissions", title:"bypassPermissions（危险）", desc:"跳过所有权限检查：能改任何文件、跑任何命令，没人拦。只在你信得过、且能回滚的仓库里用。", risky:true }
 ];
-var KINDS = [
-  ["propose", "提议 PROPOSE"], ["attack", "反驳 ATTACK"], ["defend", "辩护 DEFEND"],
-  ["verdict", "裁决 VERDICT"], ["patch", "补丁 PATCH"], ["test", "测试 TEST"],
-  ["audit", "审查 AUDIT"], ["route", "分派 ROUTE"]
-];
+var MODELS = ["", "opus", "sonnet", "haiku", "fable"];
+var KINDS = [["propose","提议 PROPOSE"],["attack","反驳 ATTACK"],["defend","辩护 DEFEND"],
+  ["verdict","裁决 VERDICT"],["patch","补丁 PATCH"],["test","测试 TEST"],["audit","审查 AUDIT"],["route","分派 ROUTE"]];
+var SUBAGENTS = ["", "forge-proposer", "forge-critic", "forge-reviewer"];
 var COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
 
-var DEFAULTS = [
-  { name: "提议者", kind: "propose", duty: "提出最小侵入的方案,只改必要的东西", trigger: "always" },
-  { name: "反驳者", kind: "attack",  duty: "找反例,永远试着推翻上一个方案;给不出反例就明说", trigger: "always" },
-  { name: "复核者", kind: "audit",   duty: "判据判绿之后做最后一遍复核", trigger: "on_green" }
+var roles = [
+  { name:"提议者", kind:"propose", subagent:"forge-proposer", model:"sonnet", trigger:"always", duty:"提出最小侵入的改法并落地" },
+  { name:"反驳者", kind:"attack",  subagent:"forge-critic",   model:"opus",   trigger:"always", duty:"只找反例，不许改文件" },
+  { name:"复核者", kind:"audit",   subagent:"forge-reviewer", model:"sonnet", trigger:"on_green", duty:"判绿后查是否把判据糊弄过去了" }
 ];
+var perm = "auto";
+var poll = null;
 
-var roles = [];
-function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
-  return ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c]; }); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+  return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]; }); }
+function $(id){ return document.getElementById(id); }
+function str(id){ return $(id).value.trim(); }
+function num(id){ var v = str(id); return v === "" ? null : Number(v); }
 
-function providerOf(id){ return PROVIDERS.filter(function(p){ return p.id === id; })[0] || PROVIDERS[0]; }
-
-function render(){
-  var host = document.getElementById("roles");
-  host.innerHTML = roles.map(function(r, i){
-    return '<div class="role" style="border-left-color:' + COLORS[i % COLORS.length] + '">' +
-      '<div class="top"><span class="n">#' + (i + 1) + '</span>' +
-        '<span class="grow"></span>' +
-        '<button type="button" class="ghost" data-act="up" data-i="' + i + '" title="上移">↑</button>' +
-        '<button type="button" class="ghost" data-act="down" data-i="' + i + '" title="下移">↓</button>' +
-        '<button type="button" class="ghost danger" data-act="del" data-i="' + i + '">删除</button></div>' +
-      '<div class="grid g3">' +
-        '<label>名称<input data-f="name" data-i="' + i + '" value="' + esc(r.name) + '" /></label>' +
-        '<label>档位<select data-f="kind" data-i="' + i + '">' + KINDS.map(function(k){
-          return '<option value="' + k[0] + '"' + (r.kind === k[0] ? " selected" : "") + '>' + k[1] + '</option>';
-        }).join("") + '</select></label>' +
-        '<label>何时发言<select data-f="trigger" data-i="' + i + '">' +
-          '<option value="always"' + (r.trigger === "always" ? " selected" : "") + '>每轮</option>' +
-          '<option value="on_green"' + (r.trigger === "on_green" ? " selected" : "") + '>仅判据判绿后</option>' +
-        '</select></label>' +
-      '</div>' +
-      '<label>职责（进 system 提示词）<textarea data-f="duty" data-i="' + i + '">' + esc(r.duty) + '</textarea></label>' +
-      '<div class="grid g3">' +
-        '<label>PROVIDER<select data-f="provider" data-i="' + i + '">' + PROVIDERS.map(function(p){
-          return '<option value="' + p.id + '"' + (r.provider === p.id ? " selected" : "") + '>' + esc(p.label) + '</option>';
-        }).join("") + '</select></label>' +
-        '<label>模型<input data-f="model" data-i="' + i + '" class="mono" value="' + esc(r.model) + '" /></label>' +
-        '<label>BASE URL（自定义网关才填）<input data-f="baseUrl" data-i="' + i + '" class="mono" value="' + esc(r.baseUrl || "") + '" placeholder="留空 = 用内置地址" /></label>' +
-      '</div>' +
-    '</div>';
+function renderRoles(){
+  $("roles").innerHTML = roles.map(function(r,i){
+    return '<div class="role" style="border-left-color:'+COLORS[i%COLORS.length]+'">'+
+      '<div class="top"><span class="n">#'+(i+1)+'</span><span class="grow"></span>'+
+        '<button type="button" class="ghost" data-act="up" data-i="'+i+'" title="上移">↑</button>'+
+        '<button type="button" class="ghost" data-act="down" data-i="'+i+'" title="下移">↓</button>'+
+        '<button type="button" class="ghost danger" data-act="del" data-i="'+i+'">删除</button></div>'+
+      '<div class="grid g4">'+
+        '<label>名称<input data-f="name" data-i="'+i+'" value="'+esc(r.name)+'" /></label>'+
+        '<label>档位<select data-f="kind" data-i="'+i+'">'+KINDS.map(function(k){
+          return '<option value="'+k[0]+'"'+(r.kind===k[0]?" selected":"")+'>'+k[1]+'</option>'; }).join("")+'</select></label>'+
+        '<label>子 AGENT<select data-f="subagent" data-i="'+i+'">'+SUBAGENTS.map(function(s){
+          return '<option value="'+s+'"'+(r.subagent===s?" selected":"")+'>'+(s||"不派（主 agent 自己演）")+'</option>'; }).join("")+'</select></label>'+
+        '<label>模型<select data-f="model" data-i="'+i+'">'+MODELS.map(function(m){
+          return '<option value="'+m+'"'+(r.model===m?" selected":"")+'>'+(m||"跟随子 agent 定义")+'</option>'; }).join("")+'</select></label>'+
+      '</div>'+
+      '<div class="grid g2">'+
+        '<label>职责<input data-f="duty" data-i="'+i+'" value="'+esc(r.duty)+'" /></label>'+
+        '<label>何时发言<select data-f="trigger" data-i="'+i+'">'+
+          '<option value="always"'+(r.trigger==="always"?" selected":"")+'>每轮</option>'+
+          '<option value="on_green"'+(r.trigger==="on_green"?" selected":"")+'>仅判据判绿后</option>'+
+        '</select></label>'+
+      '</div></div>';
   }).join("");
-  renderKeys();
 }
-
-function renderKeys(){
-  var need = {};
-  roles.forEach(function(r){ var p = providerOf(r.provider); if (p.env) need[p.env] = true; });
-  var list = Object.keys(need);
-  document.getElementById("keys").innerHTML = list.length
-    ? "需要的环境变量：<b>" + list.join("</b> <b>") + "</b>（起服务的那个终端里设）"
-    : "当前全是 mock,不需要任何 key。";
+function renderPerm(){
+  $("perm").innerHTML = PERMS.map(function(p){
+    return '<label class="radio'+(perm===p.id?" on":"")+(p.risky?" risky":"")+'">'+
+      '<input type="radio" name="perm" value="'+p.id+'"'+(perm===p.id?" checked":"")+' />'+
+      '<span><b'+(p.risky?' class="dg"':'')+'>'+esc(p.title)+'</b><i>'+esc(p.desc)+'</i></span></label>';
+  }).join("");
 }
-
-function addRole(seed){
-  var i = roles.length;
-  var p = providerOf("mock");
-  roles.push(Object.assign({
-    name: "角色 " + (i + 1), kind: "propose", duty: "", trigger: "always",
-    provider: "mock", model: p.model, baseUrl: ""
-  }, seed || {}));
-  render();
-}
-
-document.getElementById("roles").addEventListener("input", function(ev){
-  var el = ev.target;
-  var i = el.getAttribute("data-i"), f = el.getAttribute("data-f");
+$("roles").addEventListener("input", function(ev){
+  var el = ev.target, i = el.getAttribute("data-i"), f = el.getAttribute("data-f");
   if (i == null || !f) return;
   roles[+i][f] = el.value;
-  if (f === "provider") {
-    // 换 provider 顺手把模型名换成该家的默认值,免得留着上一家的名字发错地方
-    roles[+i].model = providerOf(el.value).model;
-    render();
-  }
-  if (f === "provider" || f === "model") renderKeys();
 });
-document.getElementById("roles").addEventListener("click", function(ev){
-  var btn = ev.target.closest("[data-act]");
-  if (!btn) return;
-  var i = +btn.getAttribute("data-i");
-  var act = btn.getAttribute("data-act");
-  if (act === "del") roles.splice(i, 1);
-  if (act === "up" && i > 0) roles.splice(i - 1, 0, roles.splice(i, 1)[0]);
-  if (act === "down" && i < roles.length - 1) roles.splice(i + 1, 0, roles.splice(i, 1)[0]);
-  render();
+$("roles").addEventListener("click", function(ev){
+  var b = ev.target.closest("[data-act]"); if (!b) return;
+  var i = +b.getAttribute("data-i"), act = b.getAttribute("data-act");
+  if (act === "del") roles.splice(i,1);
+  if (act === "up" && i > 0) roles.splice(i-1,0,roles.splice(i,1)[0]);
+  if (act === "down" && i < roles.length-1) roles.splice(i+1,0,roles.splice(i,1)[0]);
+  renderRoles();
 });
-document.getElementById("addRole").addEventListener("click", function(){ addRole(); });
+$("addRole").addEventListener("click", function(){
+  roles.push({ name:"角色 "+(roles.length+1), kind:"attack", subagent:"forge-critic", model:"opus", trigger:"always", duty:"" });
+  renderRoles();
+});
+$("perm").addEventListener("change", function(ev){
+  if (ev.target.name === "perm") { perm = ev.target.value; renderPerm(); }
+});
 
-function num(id){
-  var v = document.getElementById(id).value.trim();
-  return v === "" ? null : Number(v);
-}
-function str(id){ return document.getElementById(id).value.trim(); }
-
-document.getElementById("start").addEventListener("click", async function(){
-  var btn = this, msg = document.getElementById("msg");
-  var cfg = {
-    session: str("session") || "未命名回环",
-    repo: str("repo"), branch: str("branch"),
-    client: "setup page",
+function config(){
+  return {
+    session: (str("task") || "页面发起的回环").slice(0, 60),
+    task: str("task"),
     goal: {
-      command: str("cmd"),
-      cwd: str("cwd") || null,
-      metric: str("mpattern") ? {
-        name: str("mname") || "指标",
-        pattern: str("mpattern"),
-        min: num("mmin"), max: num("mmax")
-      } : null
+      command: str("cmd"), cwd: str("cwd") || null,
+      metric: str("mpattern") ? { name: str("mname") || "指标", pattern: str("mpattern"),
+        min: num("mmin"), max: num("mmax") } : null
     },
-    budget: {
-      tokens: num("btok") || 200000, seconds: num("bsec") || 1800,
-      rounds: num("brounds") || 6, noProgressRounds: num("bnp") || 2
-    },
-    roles: roles.map(function(r){
-      return {
-        name: r.name, duty: r.duty, kind: r.kind, trigger: r.trigger,
-        provider: r.provider, model: r.model, baseUrl: r.baseUrl || null
-      };
-    })
+    budget: { rounds: num("brounds") || 6, seconds: num("bsec") || 1800,
+      noProgressRounds: num("bnp") == null ? 2 : num("bnp") },
+    roles: roles.map(function(r){ return {
+      name: r.name, kind: r.kind, duty: r.duty, trigger: r.trigger,
+      subagent: r.subagent || null, model: r.model || null }; }),
+    permissionMode: perm,
+    model: str("model") || null,
+    note: str("note") || null
   };
-  if (!cfg.roles.length) { msg.className = "msg err"; msg.textContent = "至少要有一个角色。"; return; }
-  if (!cfg.goal.command) {
-    // 不拦,但必须明说后果 —— 静默接受一个判不出达标的目标才是坏的
-    if (!confirm("没填判据命令：这次回环没有可判定的目标,只能靠预算耗尽或零进展停止。继续吗？")) return;
-  }
-  btn.disabled = true;
-  msg.className = "msg";
-  msg.textContent = "正在启动…";
+}
+function setMsg(text, cls){ var m = $("msg"); m.className = "msg" + (cls ? " " + cls : ""); m.textContent = text; }
+
+async function refresh(){
   try {
-    var res = await fetch("/runs", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(cfg)
-    });
-    var data = await res.json();
-    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-    location.href = "/";
+    var s = await (await fetch("/agent/status")).json();
+    var running = s.running || (s.loop && s.loop.active);
+    if (s.lines && s.lines.length) $("livecard").classList.remove("hide");
+    $("livedot").className = "dot" + (s.running ? " on" : "");
+    $("livemode").textContent = [s.mode, s.cwd].filter(Boolean).join(" · ");
+    $("livetitle").textContent = s.running
+      ? ("agent 在跑 " + s.seconds + "s" + (s.loop && s.loop.active ? " · 第 " + s.loop.round + " 轮" : " · 还没开局"))
+      : (s.exitCode === null ? "没有在跑"
+          : "已结束（exit " + s.exitCode + "）" + (s.loop && s.loop.endedReason ? " · " + s.loop.endedReason : ""));
+    $("livelog").textContent = (s.lines || []).map(function(l){ return l.line; }).join("\n") || "（还没有输出）";
+    $("run").disabled = !!running;
+    $("stop").classList.toggle("hide", !running);
+    if (!running && poll) { clearInterval(poll); poll = null; }
+  } catch (_) {}
+}
+
+$("run").addEventListener("click", async function(){
+  var cfg = config();
+  if (!cfg.roles.length) return setMsg("至少要有一个角色。", "err");
+  if (!cfg.goal.command &&
+      !confirm("没填判据命令：这次回环判不出达标，只能靠轮数/时限停。继续吗？")) return;
+  if (cfg.permissionMode === "bypassPermissions" &&
+      !confirm("bypassPermissions：agent 能改任何文件、跑任何命令，没人拦。\n确认这个目录可信、且你能回滚吗？")) return;
+  this.disabled = true;
+  setMsg("正在起 agent…");
+  try {
+    var res = await fetch("/agent/run", { method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify(cfg) });
+    var d = await res.json();
+    if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
+    setMsg("已启动" + (d.preset ? "（配置已存 " + d.preset + "）" : ""), "ok");
+    $("livecard").classList.remove("hide");
+    if (!poll) poll = setInterval(refresh, 1500);
+    refresh();
   } catch (err) {
-    btn.disabled = false;
-    msg.className = "msg err";
-    msg.textContent = "启动失败：" + err.message;
+    this.disabled = false;
+    setMsg("启动失败：" + err.message + "（claude CLI 在 PATH 里吗？）", "err");
   }
 });
+$("stop").addEventListener("click", async function(){
+  setMsg("正在停止…");
+  try { await fetch("/agent/stop", { method:"POST" }); } catch (_) {}
+  setMsg("已请求停止", "ok");
+  refresh();
+});
+$("genPrompt").addEventListener("click", async function(){
+  var d = await (await fetch("/agent/prompt", { method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify(config()) })).json();
+  $("promptcard").classList.remove("hide");
+  $("promptout").value = d.prompt;
+  $("promptout").scrollIntoView({ behavior:"smooth", block:"center" });
+});
+$("copyPrompt").addEventListener("click", function(){
+  $("promptout").select();
+  navigator.clipboard.writeText($("promptout").value).then(function(){ setMsg("已复制", "ok"); });
+});
 
-DEFAULTS.forEach(function(d){ addRole(d); });
+renderRoles(); renderPerm(); refresh();
+poll = setInterval(refresh, 3000);
 </script>
 </body>
 </html>

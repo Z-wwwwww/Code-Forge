@@ -17,7 +17,30 @@
  */
 
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
 const { spawn } = require("child_process");
+
+/**
+ * 监控台在哪:四级查找。
+ *   ① --url（显式指定,也意味着「别自动拉起」）
+ *   ② CODE_FORGE_URL —— 页面点 Run 起的 claude 进程带下来的,MCP server 由那个
+ *      claude 拉起因而继承得到,两边必然指向同一个监控台
+ *   ③ 端口文件 —— 监控台启动时写下自己的真实端口。**必须有这一层**:4610 被占用时
+ *      监控台会自动 +1,而写死 4610 的一侧就再也找不到它了(实测踩过这个)
+ *   ④ 兜底 4610
+ */
+function portFile() { return path.join(os.tmpdir(), "code-forge-port.json"); }
+
+function discoverBase(explicitUrl) {
+  if (explicitUrl) return explicitUrl;
+  if (process.env.CODE_FORGE_URL) return process.env.CODE_FORGE_URL;
+  try {
+    const info = JSON.parse(fs.readFileSync(portFile(), "utf8"));
+    if (info && info.port) return "http://localhost:" + info.port;
+  } catch (_) {}
+  return "http://localhost:4610";
+}
 
 const TOOLS = [
   {
@@ -143,7 +166,7 @@ const TOOLS = [
 
 function serve(opts) {
   const explicitUrl = opts && opts.url;
-  let base = explicitUrl || "http://localhost:4610";
+  let base = discoverBase(explicitUrl);
   let consoleChild = null;
   let buf = "";
 
@@ -174,6 +197,12 @@ function serve(opts) {
     if (explicitUrl) {
       log("连不上 " + base + "（--url 指定的地址,不自动拉起）");
       return false;
+    }
+    // 端口文件可能是上次留下的死记录 —— 重查一次,别抱着一个连不上的地址去拉新进程
+    const rediscovered = discoverBase(null);
+    if (rediscovered !== base) {
+      base = rediscovered;
+      if (await alive()) { log("监控台在 " + base); return true; }
     }
     if (!consoleChild) {
       log("监控台没在跑,正在拉起…");
