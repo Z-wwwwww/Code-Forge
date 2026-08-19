@@ -1604,6 +1604,94 @@ async function testPackaging() {
  * 报不出成本时编一个、以及反过来 —— 明明报得出却继续说「不可得」。
  * 下面每一条钉的都是其中一种。
  * ================================================================== */
+/* ---------------- 聊天那条路的真模型/真用量（读 Claude Code 的子 agent 档案） ---------------- */
+/**
+ * 用户实测抱怨两句:「角色没有显示什么模型」「token 显示不可得」。
+ * 成因不在显示层 —— 聊天里驱动时 roles[*].model 只有占位、也确实没人报账。
+ * 但 Claude Code **自己把每个子 agent 存了档**(模型 + 逐条 usage),那才是真数。
+ * 这一组钉住读档案的四条纪律:去重、分界、增量、不是我们的活不算。
+ */
+async function testChatUsage() {
+  console.log("\n【聊天路径的真模型与真用量】");
+  const cu = require("./chatusage.js");
+  const roles = [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }];
+
+  assert.strictEqual(cu.slugFor("C:\\Projects_GitHub_my\\code-forge"),
+    "C--Projects-GitHub-my-code-forge",
+    "★ 项目目录名的算法要跟 Claude Code 一致(非字母数字全换成 -),错一个字符就一条档案都找不到");
+
+  const root = path.join(os.tmpdir(), "cf-chatusage-" + process.pid);
+  const sub1 = path.join(root, "sess-1", "subagents");
+  fs.mkdirSync(sub1, { recursive: true });
+  const T0 = Date.parse("2026-08-19T00:00:00.000Z");
+  const asst = function (id, ts, u, content) {
+    return JSON.stringify({ type: "assistant", timestamp: ts,
+      message: { id: id, model: "claude-opus-5", usage: u, content: content || [] } });
+  };
+  const U = function (i, o, cr, cw) {
+    return { input_tokens: i, output_tokens: o, cache_read_input_tokens: cr, cache_creation_input_tokens: cw };
+  };
+  const READ = [{ type: "tool_use", id: "b1", name: "Read" }];
+  const critic = path.join(sub1, "agent-aaa.jsonl");
+  fs.writeFileSync(path.join(sub1, "agent-aaa.meta.json"),
+    JSON.stringify({ agentType: "forge-critic", description: "挖 MCP 与服务端 bug" }));
+  fs.writeFileSync(critic, [
+    asst("m_old", "2026-08-18T23:59:00.000Z", U(999, 999, 0, 0)),        // 开局之前的:不算
+    asst("m_1", "2026-08-19T00:00:10.000Z", U(10, 5, 100, 20), READ),
+    asst("m_1", "2026-08-19T00:00:11.000Z", U(10, 5, 100, 20), READ),    // 同一条消息的第二片
+    JSON.stringify({ type: "assistant", timestamp: "2026-08-19T00:00:12.000Z",
+      message: { id: "m_syn", model: "<synthetic>", usage: U(7, 7, 7, 7), content: [] } })
+  ].join("\n") + "\n");
+  // 用户在同一个目录下干的别的活 —— 一分钱都不该算到这次回环的角色头上
+  fs.writeFileSync(path.join(sub1, "agent-zzz.meta.json"),
+    JSON.stringify({ agentType: "general-purpose", description: "查一下别的东西" }));
+  fs.writeFileSync(path.join(sub1, "agent-zzz.jsonl"),
+    asst("m_x", "2026-08-19T00:00:20.000Z", U(500, 500, 500, 500)) + "\n");
+
+  const p = cu.createPuller({ root: root, roles: roles, sinceMs: T0 });
+  const first = p.pull(1);
+  assert.strictEqual(first.length, 1,
+    "★ 只认本回环的子 agent(general-purpose 那份不算),实际 " + first.length + " 条");
+  const e = first[0];
+  assert.strictEqual(e.role, "反驳者", "★ 描述里没点名字时,按 agentType 的 kind 认角色");
+  assert.strictEqual(e.model, "claude-opus-5", "★ 模型取它自己写下来的那个(合成消息不是模型说的话)");
+  assert.deepStrictEqual([e.in, e.out, e.cacheRead, e.cacheWrite], [10, 5, 100, 20],
+    "★ 同一条消息的多个分片只能算一次(实测 25 行 assistant 只有 10 个 id —— 不去重账翻 2.5 倍);" +
+    "开局之前的旧消息与合成消息都不算");
+  assert.deepStrictEqual(e.tools, { Read: 1 }, "★ 工具块也按 id 去重");
+  assert.strictEqual(e.msgs, 1, "★ 条数同样去重");
+
+  assert.strictEqual(p.pull(1).length, 0,
+    "★ 没有新增就不发事件(usage 在下游是累加语义,重发一次账就翻倍)");
+
+  fs.appendFileSync(critic, asst("m_2", "2026-08-19T00:01:00.000Z", U(3, 4, 5, 6)) + "\n");
+  const second = p.pull(2);
+  assert.strictEqual(second.length, 1, "档案长了就该有新事件");
+  assert.deepStrictEqual([second[0].in, second[0].out, second[0].cacheRead, second[0].cacheWrite],
+    [3, 4, 5, 6], "★ 发的是**增量**不是总数");
+  assert.strictEqual(second[0].round, 2, "增量记到拉取时的那一轮");
+
+  // 同一个角色同时派好几份(三个反驳者各攻一片):账要合起来,不能只显示第一份
+  const tui = require("./tui.js");
+  const st = tui.newState();
+  [{ t: "run.start", session: "s", mode: "host", budget: { rounds: 0, seconds: 60 } },
+    { t: "role.add", id: "role2", name: "反驳者", model: "宿主模型" },
+    { t: "usage", agent: "a1", role: "反驳者", model: "claude-opus-5", round: 1, in: 10, out: 20 },
+    { t: "usage", agent: "a2", role: "反驳者", model: "claude-opus-5", round: 1, in: 30, out: 40 }
+  ].forEach(function (ev) { tui.reduce(st, ev); });
+  const row = tui.renderLines(st, 100, {}).map(function (l) { return l.text; })
+    .filter(function (x) { return x.indexOf("反驳者") >= 0; }).join(" ")
+    .replace(/\x1b\[[0-9;]*m/g, "");
+  assert.ok(row.indexOf("opus-5") >= 0,
+    "★ 角色行要显示**量到的真模型**,而不是配置里那个「宿主模型」占位");
+  assert.ok(/40\s*↑/.test(row) && /60\s*↓/.test(row),
+    "★ 同一角色的多份账要加起来(10+30↑ / 20+40↓);只取第一份会少报一大截。实际:" + row);
+  assert.ok(row.indexOf("不可得") < 0, "量到了就不许再写「token 不可得」");
+
+  try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) {}
+  ok("★ 聊天路径的账:按 id 去重、开局前的不算、别人的子 agent 不算、只发增量;角色行显示真模型与合计");
+}
+
 async function testUsage() {
   console.log("\n【逐 agent 用量】");
   const usage = require("./usage.js");
@@ -1759,9 +1847,14 @@ async function testUsage() {
   assert.deepStrictEqual(tui.renderUsage(usage.reduceEvents([]), 1, 100), [],
     "没有上报就一行都不画");
   const noneTxt = tui.usageReport(usage.reduceEvents([]), 100);
-  assert.ok(/聊天里/.test(noneTxt) && /确实拿不到/.test(noneTxt),
-    "报告要分清「聊天里驱动确实拿不到」与「本该有却没有」");
-  ok("★ 零上报时不画假表，并说清两种「没有」的区别");
+  /* ★ 老文案说「聊天里驱动那条路用量**确实拿不到**」——这句已经不成立了:
+   *   Claude Code 把每个子 agent 单独存了档(模型 + 逐条 usage),chatusage.js 读得到。
+   *   留着这句话比没有更糟:它会让人以为空表是天生如此,而不去查真正的原因。 */
+  assert.ok(!/确实拿不到/.test(noneTxt),
+    "★ 不许再说「聊天里那条路用量确实拿不到」—— 子 agent 的账现在读得到");
+  assert.ok(/还没真的干过活/.test(noneTxt) && /子 agent 档案/.test(noneTxt),
+    "零上报要说清可能的原因(角色还没干活 / 宿主没有这份档案 / 目录对不上)");
+  ok("★ 零上报时不画假表，并说清几种「没有」的区别");
 
   // ⑥ 网页与 TUI 走同一套 reduce,且网页按名字认回角色(否则同名两行账)
   assert.ok(/case "usage"/.test(html), "监控台要认 usage 事件");
@@ -2568,6 +2661,7 @@ async function testEnsureConsole() {
     await testPerRole();
     await testStops();
     await testUsage();
+    await testChatUsage();
     await testMcpEndToEnd();
     await testBringUpConsole();
     await testEnsureConsole();

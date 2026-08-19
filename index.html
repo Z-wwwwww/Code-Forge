@@ -546,7 +546,7 @@ function renderHeader(round, isLive){
             ? "左栏各角色相加（in " + k1(t.in) + " / out " + k1(t.out) + "），数字是 agent 自己报的" +
               (gap ? "。CLI 收尾另报了 " + k1(gap) + " 输出摊不到具体角色（thinking 不带归属信息），" +
                      "所以各角色的 out 是下界" : "")
-            : "从聊天里驱动时执行者不向监控台报账,用量在你的订阅账上 —— 这条路上拿不到") + '">' +
+             : "还没有任何角色报出用量：角色可能还没真的干活，或这个宿主没有可读的子 agent 档案") + '">' +
           '<span class="v">' + (totShown ? k1(totShown) : "—") + '</span>' +
           '<span class="k">' + (totShown ? "TOKENS 总计" : "TOKENS 未上报") + "</span></div>" +
         // 成本只显示 agent 自己报的那个数。查价目表乘一遍算出来的是编的,不写。
@@ -596,7 +596,7 @@ function renderRanking(){
       .sort(function(a,b){ return b[1] - a[1]; }).slice(0, 3)
       .map(function(p){ return p[0] + "×" + p[1]; }).join(" ");
     return '<button data-act="rank" data-v="' + r.id + '" style="opacity:' + op + '" title="' +
-        esc(r.duty || r.name) + (unknown ? " · 用量在宿主账上,这里拿不到" : "") + '">' +
+        esc(r.duty || r.name) + (unknown ? " · 这个角色还没有可读的账（干完活才有）" : "") + '">' +
       '<span class="top">' +
         '<span class="sw" style="background:' + r.color + '"></span>' +
         '<span class="nm">' + esc(r.name) + "</span>" +
@@ -610,7 +610,7 @@ function renderRanking(){
         "</span>") +
       '<span class="foot">' +
         (silent ? '<span>本回环还没轮到它</span>'
-          : unknown ? '<span>用量不可得（宿主执行）</span>'
+          : unknown ? '<span>暂无用量（干完活才有账）</span>'
           : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>" +
             (r.cacheRead ? "<span>缓存 " + k1(r.cacheRead) + "</span>" : "")) +
         "<span>" + esc(r.model) + "</span>" +

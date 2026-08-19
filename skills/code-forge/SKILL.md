@@ -208,8 +208,9 @@ loop_begin({session, goal:{command, cwd, metric}, budget, roles})
 - `summary` 一句话结论(页面折叠行就显示这句),`body` 放完整理由。
 - 改了文件就带上 `diff`(file / add / del / lines),页面右栏会长出代码演进。
 - 用了工具就带上 `tool`(name / args / result / status),页面会显示成工具块。
-- **token 用量不要编,但看得到就要报**:子 agent 收工时若结果里带用量(Task 的返回常带),
-  把它报进 `loop_say({tok:{in,out}})` —— 角色行就有账了。看不到就不带,页面如实显示「不可得」,
+- **token 用量不要编**:Claude Code 里子 agent 的账**不用你操心** —— 它自己把每个子 agent
+  存了档(`~/.claude/projects/…/subagents/`,带真模型与逐条 usage),监控台直接读那份。
+  你手上确实拿得到数(结果里带用量)时可以顺手报进 `loop_say({tok:{in,out}})`;拿不到就别带,
   **绝不许估一个数**。
 - 能并行就并行:提议者和反驳者在同一轮里互不依赖时,可以并发派子任务,再各自 `loop_say`。
 - 不确定还能不能继续就 `loop_status`,别自己估。

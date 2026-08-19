@@ -463,8 +463,10 @@ function renderLines(st, width, view) {
   if (run.mode === "host") {
     L.push(kv("用量", usg.measured
       ? kfmt(usg.grand.in + usg.grand.out) +
-        (usg.costUsd != null ? C.dim("  ·  ") + C.green("$" + usg.costUsd.toFixed(2)) : "")
-      : C.dim("宿主执行 · 暂无用量上报")));
+        (usg.costUsd != null ? C.dim("  ·  ") + C.green("$" + usg.costUsd.toFixed(2)) : "") +
+        // 只含角色 —— 协调者本人的 token 摊不出来。不标一句,这个数会被当成全部花费
+        C.dim("  仅角色（协调者本人摊不出来）")
+      : C.dim("角色还没干活 · 暂无用量")));
   }
 
   // 展开/选中哪一轮:调用方(直播那层)说了算;没说就是最后一轮 —— 也就是老样子
@@ -480,8 +482,21 @@ function renderLines(st, width, view) {
       const col = r.id === "gate" ? C.grey : ROLE_COLORS[i % ROLE_COLORS.length];
       // 量到了真模型就显示真的。`role.add` 里那个是 agent 自己声明的,宿主执行时它多半写
       // 「宿主模型」—— 同一屏上一处写「宿主模型」、一处写「sonnet-5」会让人以为是两个东西。
-      const measured = (usg.agents || []).filter(function (a) { return a.role === r.name; })[0];
-      const model = measured && measured.model ? shortModel(measured.model) : r.model;
+      /* ★ 同一个角色可能同时派出去好几份(三个反驳者各攻一片、或跨轮换了模型) ——
+       *   账要**全部加起来**。原来取 [0] 只显示第一份,三个反驳者的账少报两份。 */
+      const mine = (usg.agents || []).filter(function (a) { return a.role === r.name; });
+      const measured = mine.length
+        ? mine.reduce(function (acc, a) {
+          acc.in += a.in; acc.out += a.out; return acc;
+        }, { in: 0, out: 0 })
+        : null;
+      // 模型也可能不止一个(中途换过 / 同角色派了不同模型):都列出来,不挑一个当代表
+      const models = [];
+      mine.forEach(function (a) {
+        const m = a.model ? shortModel(a.model) : null;
+        if (m && models.indexOf(m) < 0) models.push(m);
+      });
+      const model = models.length ? models.join("/") : r.model;
       // in/out 各自成列。写成一整串再右对齐,位数一变整列就跳,读起来像在抖。
       // 量不到就明说「不可得」—— 空着会被读成「没花」,而聊天里子 agent 是花在订阅账上
       // 账的优先级:独立进程自报(最准) > loop_say 带的 tok > 不可得
@@ -699,11 +714,12 @@ function usageReport(u, W) {
 
   if (!u || !u.measured) {
     L.push("");
-    L.push(C.yellow("这次回环没有任何用量上报。两种可能,别混:"));
-    note("· 从聊天里 /code-forge 起的 —— 执行者是你正在用的那个会话,它不向监控台报账,", "  ");
-    note("这条路上用量**确实拿不到**(在你的订阅账上)。", "    ");
-    note("· 独立进程的角色（loop_agent 派的）—— 用量由那个进程自己报,本该有。", "  ");
-    note("一条都没有,多半是 agent 还没说话,或者它一上来就退了(看直播窗口)。", "    ");
+    L.push(C.yellow("这次回环一条用量都没有。可能是:"));
+    note("· 角色还没真的干过活 —— 账是角色干完活才有的,开局那几分钟本来就空。", "  ");
+    note("· 宿主不是 Claude Code —— 逐角色的账现在读的是 Claude Code 自己存的子 agent 档案", "  ");
+    note("(~/.claude/projects/…/subagents/),别的宿主没有这份档,只有 loop_agent 派出去的", "    ");
+    note("独立进程会自己报账。", "    ");
+    note("· 起监控台的目录跟你干活的目录不是同一个 —— 档案是按目录分的,找不到就是空。", "  ");
     return L.join("\n");
   }
 
@@ -740,6 +756,10 @@ function usageReport(u, W) {
       L.push(C.yellow((i === 0 ? "      " : "") + l));
     });
   }
+  // ★ 协调者本人的账**摊不出来**(它的 token 混在用户那条会话的整个对话里,还夹着跟这次
+  //   回环无关的聊天)。不说清楚,这个合计会被当成「这次回环花的全部」——那是少报。
+  note("↑ 只含**角色**(子 agent / 独立进程)的账。聊天里那个协调者本人的 token 混在你自己" +
+    "那条会话里,摊不到这次回环头上 —— 所以实际花费比这个数高。");
   note("↑ 这是下面各行之和。成本是 CLI 收尾自报的 total_cost_usd" +
     // 混宿主且只有一部分报账时不能再说「这次运行真花的钱」—— 上面刚警告过它不全,
     // 紧接着又这么写就是自相矛盾

@@ -2,6 +2,10 @@
 /**
  * 用量归属 —— 把 `claude -p --output-format stream-json` 的输出摊到**每个 agent** 头上。
  *
+ * ⚠ 这层管的是**我们自己 spawn 的执行者**(loop_agent/评审者)。聊天里 Claude Code
+ *   派的子 agent 走的是另一条路:它把每个子 agent 单独存了档,由 `chatusage.js` 读出来
+ *   造成同样形状的 usage 事件,再进这里的 reduceEvents 汇总。两条路进的是同一个漏斗。
+ *
  * 为什么这层能存在(而 README 以前说「用量不可得」):
  *   「不可得」只对**聊天里驱动**那条路成立 —— 那时执行者是你正在用的那个交互式会话,
  *   它不向我们报账。但页面点 Run / `code-forge tui` 起的是**我们自己 spawn 的**

@@ -25,7 +25,7 @@
     "demo.js",
     "tui.js",
     "hookprompt.js",
-    "usage.js",
+    "usage.js", "chatusage.js",
     "adapters.js",
     "perrole.js",
     "agentcli.js",

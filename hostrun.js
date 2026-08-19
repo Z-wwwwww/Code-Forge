@@ -14,6 +14,7 @@
  */
 
 const gate = require("./gate.js");
+const chatusage = require("./chatusage.js");   // 聊天那条路的真模型/真用量(读 Claude Code 自己的子 agent 档案)
 const judge = require("./judge.js");   // 评审判据（不可量化目标）—— 判定人是独立评审者，不是协调者
 
 const REASONS = {
@@ -56,6 +57,19 @@ function create(append) {
     //   把「没报」算成「空跑」会把健康的回环误杀,比没有这个检测更糟(踩过)。
     lastFp: null, idleRounds: 0, actedThisRound: null, stalls: []
   };
+
+  /* 聊天里驱动那条路的账:执行者(用户的会话)不向我们报,但它派出去的**子 agent**
+   * 每个都被 Claude Code 单独存了档(模型 + 逐条 usage)。这里定期去把新增的那部分
+   * 读过来,角色行才有真模型、真 token,而不是「宿主模型 / token 不可得」。
+   * 拿不到就当没有 —— 任何异常都不许影响回环本身(fail-open)。 */
+  let puller = null;
+  function pullChatUsage() {
+    if (!puller) return;
+    try {
+      const evs = puller.pull(st.round);
+      if (evs.length) addUsage(evs);
+    } catch (_) { puller = null; }   // 一次读挂就别再试了,别在每条发言上重复报错
+  }
 
   // usage 事件统一从这走:落账 + 给 token 预算计数(total 汇总帧不重复计)
   function addUsage(evs) {
@@ -116,7 +130,8 @@ function create(append) {
     // 不限轮不等于不设防:时限与零进展/空跑闸门都还在 —— 烧不完的是轮数,不是钱。
     budget.rounds = Math.max(0, Math.floor(Number(budget.rounds) || 0));
     // token 预算:0/不填 = 不限(首选)。只计**量得到的**部分 —— loop_agent 派的角色和评审者
-    // 会报账;聊天里的子 agent 用量在用户订阅上,这里计不到。所以这个闸是下界闸,如实标注。
+    // 会报账;Claude Code 的子 agent 从它自己的档案里读得到(chatusage.js)。
+    // 协调者本人的账摊不出来 —— 所以这个闸是**下界闸**,如实标注。
     budget.tokens = Math.max(0, Math.floor(Number(budget.tokens) || 0));
     const PALETTE = ["#6FD3C7", "#E2707A", "#E8C468", "#7EA8F0", "#63C68E", "#C08CF0", "#E29A6B", "#8B95A2"];
     const roles = cfg.roles.map(function (r, i) {
@@ -158,6 +173,10 @@ function create(append) {
       t: "role.add", id: "gate", name: "判据", model: "确定性 · 无模型", color: "#5B6470",
       duty: (cfg.goal && cfg.goal.command) ? "跑 " + cfg.goal.command : "未配置 —— 无法判定达标"
     });
+    // 角色表定了才建得起来 —— 认档案靠的就是角色名与 kind
+    // cwd:优先用协调者带过来的(它在你干活的目录里),其次判据命令的目录,最后才是本进程的
+    puller = chatusage.createPuller({ roles: roles, sinceMs: st.startedAt,
+      cwd: cfg.cwd || (cfg.goal && cfg.goal.cwd) || process.cwd() });
     append({ t: "round.start", n: 1, title: "第 1 轮对抗", meta: stamp() + " → 进行中" });
     // 静默看门狗:第一条 loop_say 到来之前,每隔一阵在直播里报一声「还没人发言」——
     // 空屏 + 无解释是最坏的等待。quietWarnMs 可配只为测试(默认 90s)。
@@ -206,6 +225,7 @@ function create(append) {
       tok: ev.tok || null,
       meta: Object.assign({ executor: "host" }, ev.meta || {})
     }));
+    pullChatUsage();   // 角色刚干完活,它那份档案正好是新的
     return { recorded: true, round: st.round, turns: st.turns };
   }
 
@@ -223,6 +243,8 @@ function create(append) {
    */
   async function runGate(opts) {
     if (!st.active) return { error: "还没有 loop_begin" };
+    // 判据在一轮的末尾跑 —— 这一刻把这一轮各角色的账收齐,token 预算闸才是按真数关的
+    pullChatUsage();
     const goal = st.cfg.goal || {};
     const hasCmd = !!goal.command;
     const hasRubric = !!(goal.rubric && String(goal.rubric).trim());
@@ -564,6 +586,7 @@ function create(append) {
   }
 
   function status() {
+    pullChatUsage();   // 协调者来问进度时顺手收一次账(它问得比谁都勤)
     return {
       active: st.active,
       mode: "host",

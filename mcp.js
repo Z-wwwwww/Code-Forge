@@ -134,7 +134,7 @@ const TOOLS = [
           properties: {
             rounds: { type: "number", description: "最多几轮(默认 8)。0 = **不限轮数** —— 时限与零进展闸门仍然生效" },
             tokens: { type: "number", description: "token 预算,0/不填 = **不限(首选)**。只计量得到的部分" +
-              "(loop_agent 派的角色/评审者报的账);聊天里子 agent 的用量在用户订阅上,计不到 —— 这是个下界闸" },
+              "(Claude Code 子 agent 档案 + loop_agent 派的角色/评审者报的账;协调者本人摊不出来)—— 这是个下界闸" },
             seconds: { type: "number", description: "最长多少秒(默认 3600)" },
             noProgressRounds: { type: "number", description: "指标连续几轮不进步就停(默认 2)" }
           }
@@ -167,7 +167,8 @@ const TOOLS = [
       "记录某个角色这一轮说了什么(提议 / 反驳 / 补丁 / 审查结论)。每个角色每轮发言后都调一次," +
       "页面会实时出现。summary 写一句话结论,body 写完整理由。\n" +
       "可选带 tool(这一步用了什么工具及结果)与 diff(改了哪个文件、加删几行、逐行内容)。\n" +
-      "token 用量在宿主账上、这里拿不到,**不要编** —— 留空即可,页面会如实显示「不可得」。",
+      "token 不要编。Claude Code 里子 agent 的账**我们自己从它的档案里读**(模型也是真的);" +
+      "别的宿主报不出就留空,页面会如实标。",
     inputSchema: {
       type: "object",
       properties: {
@@ -429,7 +430,7 @@ function createHandler(state) {
             题2_模型: "推荐分配 (Recommended,写明 提议者X·反驳者Y·复核者Z) / 全用最强 / 全用最省 / 逐角色挑(选它再出一卡)",
             题3_轮数: "8 (Recommended) / 不限(rounds:0) / 3(快速) —— Other 自填",
             题5_token预算: "不限 (Recommended) / 500k / 200k —— Other 自填。" +
-              "只计量得到的部分(loop_agent 派的角色/评审者);聊天里子 agent 的用量在订阅账上,计不到",
+              "只计量得到的部分(Claude Code 子 agent 的账我们读得到;协调者本人摊不出来)",
             题4_时限: "3600s (Recommended) / 7200s" +
               (wantStreak ? "。目标里有「连续 N 轮」——**必须**再出 streak 一题(推荐=目标里的 N)" : ""),
             然后: "带 { token, goal, budget, roles } 重调 loop_begin(roles 至少两个;kind 用 propose/attack/audit)。",
@@ -498,7 +499,10 @@ function createHandler(state) {
             return reply(id, { error: "确认步只认 { go: true }(用户选了开跑)或 { revise: true }(再改一项)。" +
               "用户选「取消」就别再调了。" }, true);
           }
-          const cfg = state.setup.cfg;
+          /* ★ 把**你干活的那个目录**带过去。子 agent 的档案是按目录分的
+           *   (~/.claude/projects/<cwd 转成的名字>/),而监控台可能是从别处起的 ——
+           *   不带这一项,它就照自己的目录去找,一条档案都找不到,角色行又回到「不可得」。 */
+          const cfg = Object.assign({ cwd: process.cwd() }, state.setup.cfg);
           state.setup = null;   // 用掉即弃 —— 开局失败也从头走,别留半截状态
           const up = await ensureConsole();
           if (!up) {
