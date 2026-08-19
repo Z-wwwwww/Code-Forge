@@ -12,6 +12,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const net = require("net");
 const loop = require("./loop.js");
 const gate = require("./gate.js");
 
@@ -294,13 +295,14 @@ function testHttp() {
         assert.strictEqual(lines.filter(function (e) { return e.t === "run.end"; }).pop().reason, "stopped");
         ok("事件全部落盘,停止原因写进 run.end");
 
-        // /setup 现在是「填完点 Run」的宿主模式页;自带 key 的这套搬到 /setup-local
-        const setup = await fetch(base + "/setup");
-        assert.strictEqual(setup.status, 200);
-        const setupHtml = await setup.text();
-        assert.ok(/配置并启动对抗回环/.test(setupHtml), "/setup 应是 Run 页");
-        assert.ok(/id="run"/.test(setupHtml), "Run 页得有 Run 按钮");
-        ok("GET /setup 托出 Run 页（宿主执行,零 key）");
+        // （2026-08 收窄）/setup(网页 Run)删了 —— 执行只发生在 coding agent 里。404 是刻意的。
+        assert.strictEqual((await fetch(base + "/setup")).status, 404, "/setup 该 404（执行路线已移除）");
+        // /agent/run 要回 410 + 指路,老脚本打过来不能装死
+        const gone = await fetch(base + "/agent/run", { method: "POST",
+          headers: { "content-type": "application/json" }, body: "{}" });
+        assert.strictEqual(gone.status, 410, "/agent/run 该回 410");
+        assert.ok(/code-forge/.test((await gone.json()).error), "410 里要指回 /code-forge");
+        ok("执行路线的入口已封:/setup 404、/agent/run 410 并指路");
 
         const local = await fetch(base + "/setup-local");
         assert.strictEqual(local.status, 200);
@@ -315,6 +317,68 @@ function testHttp() {
   });
 }
 
+
+/* ---------------- 端口被占用时的重试 ---------------- */
+/**
+ * ★ server.listen(port, host, cb) 会把 cb 挂成 listening 监听器。EADDRINUSE 重试时
+ *   复用同一个 net.Server 而不摘掉上一次的 cb,最终绑定成功时 Node 会把历次累积的
+ *   cb **全触发一遍**:N 条「监控台已启动」横幅(前 N-1 条印着错端口)、N 次写端口文件、
+ *   没有 --no-open 时 N 个浏览器标签页。
+ *   钉住:横幅只许出现一次,且横幅上的端口 == 端口文件里的 port。
+ */
+async function testPortRetry() {
+  console.log("server — 端口被占用时的重试");
+  const logFile = path.join(os.tmpdir(), "cf-retry-" + process.pid + ".jsonl");
+  const nap = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  const grab = function (p) {
+    return new Promise(function (res, rej) {
+      const s = net.createServer();
+      s.once("error", rej);
+      s.listen(p, "127.0.0.1", function () { res(s); });
+    });
+  };
+  // 抓 4 个连号端口,再把最后一个放掉 —— 前 3 个占住,server 应当正好退让到第 4 个
+  let held = [];
+  for (let start = 4793; start < 4900; start += 4) {
+    held = [];
+    let all = true;
+    for (let i = 0; i < 4; i++) {
+      try { held.push(await grab(start + i)); } catch (_) { all = false; break; }
+    }
+    if (all) break;
+    held.forEach(function (s) { try { s.close(); } catch (_) {} });
+    held = [];
+  }
+  assert.strictEqual(held.length, 4, "本机找不到 4 个连号的空端口,测不了");
+  const busy = held[0].address().port;
+  const expect = busy + 3;
+  await new Promise(function (r) { held.pop().close(r); });   // 放掉第 4 个
+
+  const child = spawn(process.execPath,
+    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(busy)],
+    { stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  child.stdout.on("data", function (b) { out += b.toString(); });
+  const BANNER = "对抗编程监控台\\s+http://localhost:(\\d+)";
+  try {
+    for (let i = 0; i < 100 && !/对抗编程监控台/.test(out); i++) await nap(100);
+    assert.ok(/对抗编程监控台/.test(out), "监控台没起来,stdout:\n" + out);
+    await nap(700);                                            // 多余的横幅是紧接着打的
+    const hits = out.match(new RegExp(BANNER, "g")) || [];
+    assert.strictEqual(hits.length, 1,
+      "★ 端口重试后启动横幅只许打一次,实际 " + hits.length + " 条:\n" + out);
+    const shown = Number(new RegExp(BANNER).exec(out)[1]);
+    assert.strictEqual(shown, expect, "横幅上的端口该是真正绑上的那个(" + expect + ")");
+    const info = JSON.parse(fs.readFileSync(path.join(os.tmpdir(), "code-forge-port.json"), "utf8"));
+    assert.strictEqual(info.port, shown, "★ 端口文件与横幅必须是同一个端口");
+    ok("★ 端口被占用 → 只报一次启动,横幅端口 == 端口文件端口(不再重复触发 ready)");
+  } finally {
+    try { child.kill(); } catch (_) {}
+    held.forEach(function (s) { try { s.close(); } catch (_) {} });
+    try { fs.unlinkSync(logFile); } catch (_) {}
+  }
+}
+
 (async function main() {
   try {
     await testGate();
@@ -322,6 +386,7 @@ function testHttp() {
     await testAccounting();
     await testCancelBilling();
     await testHttp();
+    await testPortRetry();
     console.log("\n" + pass + " 项断言全部通过");
     process.exit(0);
   } catch (err) {

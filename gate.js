@@ -62,7 +62,7 @@ async function check(goal) {
     return { met: false, skipped: "未配置判据命令", detail: "没有可判定的目标 —— 只能靠预算闸停止" };
   }
   const r = await runCommand(goal.command, goal.cwd, goal.timeoutMs);
-  const out = { exitCode: r.code, ms: r.ms, output: r.out.slice(-4000) };
+  const out = { exitCode: r.code, ms: r.ms, output: r.out.slice(-4000), fp: fingerprint(r.out) };
 
   if (r.spawnFailed) {
     // 命令都起不来,这不是「没达标」,是判据本身坏了 —— 必须说清楚,不许静默当未达标
@@ -117,12 +117,44 @@ async function check(goal) {
   });
 }
 
-/** 进展判定:指标在往目标方向走就算有进展;没有指标就只能看达标翻转 */
-function madeProgress(goal, prev, cur) {
-  if (!goal || !goal.metric || prev == null || cur == null) return null;
-  if (goal.metric.min != null) return cur > prev;
-  if (goal.metric.max != null) return cur < prev;
+/**
+ * 判据输出的指纹 —— 给**没有 metric** 的目标用来判「有没有进展」。
+ *
+ * ★ 为什么要这个:metric 是可选的(只有输出里确实有可抓的数时才配),而
+ *   `madeProgress` 在没有 metric 时回 null = 不计入零进展。后果:**绝大多数回环的
+ *   `no_progress` 闸门根本不生效**,一个原地打转的回环能把轮数烧满才停。
+ *   连续两轮判据输出一模一样,基本就是没动到判据关心的东西。
+ *
+ * 归一化掉每次都会变的东西(耗时、时间戳、临时路径、内存地址),否则指纹永远不同,
+ * 这个闸门还是等于没有。
+ */
+function fingerprint(output) {
+  const s = String(output || "")
+    .replace(/\d+\.\d+s|\d+ms|\b\d+\.\d{2,}\b/g, "T")          // 耗时
+    .replace(/\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}/g, "D")      // 时间戳
+    .replace(/0x[0-9a-f]+/gi, "A")                              // 地址
+    .replace(/[\\/][\w.-]*(tmp|temp)[\w.-]*[\\/][\w.-]+/gi, "P") // 临时路径
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  return require("crypto").createHash("sha1").update(s).digest("hex").slice(0, 16);
+}
+
+/**
+ * 进展判定。
+ *   有 metric → 看它是否往目标方向走(这是最可靠的信号)
+ *   没有 metric → 退回比**判据输出指纹**:连续两轮一模一样 = 没有进展
+ * 两者都拿不到就回 null(不计入)。
+ */
+function madeProgress(goal, prev, cur, prevFp, curFp) {
+  if (goal && goal.metric && prev != null && cur != null) {
+    if (goal.metric.min != null) return cur > prev;
+    if (goal.metric.max != null) return cur < prev;
+  }
+  // 没有 metric 时的兜底 —— 少了这一档,零进展闸门对多数回环都是空的
+  if (prevFp && curFp) return prevFp !== curFp;
   return null;
 }
 
-module.exports = { check: check, madeProgress: madeProgress, runCommand: runCommand };
+module.exports = { check: check, madeProgress: madeProgress, runCommand: runCommand,
+  fingerprint: fingerprint };

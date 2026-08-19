@@ -32,11 +32,28 @@ const has = (f) => argv.includes("--" + f);
 const DRY = has("dry-run");
 const UNINSTALL = has("uninstall");
 
+/**
+ * 运行时装在哪。
+ *
+ * 关键在 npx:`npx code-forge install` 时 __dirname 在 npm 的临时缓存里,
+ * 那个目录**过一阵就没了**。把 MCP 指到那儿,注册当时能用,几天后 agent 一调
+ * loop_begin 就是「找不到模块」—— 而且看上去像是插件坏了,不像是装法有问题。
+ * 所以从临时目录跑时先把运行时**复制**到 ~/.claude/code-forge/,再指到那份副本。
+ * 从 clone 出来的仓库里跑就直接指仓库(改代码立刻生效,开发的人要的是这个)。
+ */
+const RUNTIME_DIR = path.join(CLAUDE_DIR, "code-forge");
+const EPHEMERAL = /[\\/](_npx|\.npm[\\/]_cacache|npm-cache)[\\/]/i.test(HERE) ||
+  (process.env.npm_config_cache && HERE.startsWith(process.env.npm_config_cache));
+const COPY = has("copy") || (EPHEMERAL && !has("no-copy"));
+// MCP 指向哪一份 server.js —— 复制过就指副本,否则指这里
+const RUNTIME = COPY ? RUNTIME_DIR : HERE;
+
 const done = [];
 const skipped = [];
 const failed = [];
 
 function say(s) { console.log(s); }
+function C_dim(s) { return (process.stdout.isTTY && !process.env.NO_COLOR) ? "\x1b[90m" + s + "\x1b[0m" : s; }
 function rel(p) { return p.replace(HOME, "~"); }
 
 function writeFile(dest, content) {
@@ -65,6 +82,128 @@ function removeFile(dest) {
   }
 }
 
+/* ---------------- 运行时副本（npx 那条路） ---------------- */
+function copyTree(src, dst) {
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    if (!DRY) fs.mkdirSync(dst, { recursive: true });
+    fs.readdirSync(src).forEach((f) => copyTree(path.join(src, f), path.join(dst, f)));
+    return;
+  }
+  if (DRY) return;
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(src, dst);
+}
+
+function installRuntime() {
+  // 从副本自己跑的:什么都不用做,否则会自己复制自己
+  if (path.resolve(HERE) === path.resolve(RUNTIME_DIR)) { skipped.push("运行时已经就位"); return; }
+  // 抄谁:以 package.json 的 files 为准 —— 那是唯一一份「跑起来需要哪些文件」的清单,
+  // 在这里另写一份,两份迟早对不上(而对不上的表现是运行时 require 失败)
+  let list = [];
+  try {
+    list = JSON.parse(fs.readFileSync(path.join(HERE, "package.json"), "utf8")).files || [];
+  } catch (_) {}
+  list = list.concat(["package.json"]).filter((f) => fs.existsSync(path.join(HERE, f)));
+  if (!list.length) { failed.push("找不到要复制的运行时文件（package.json 的 files 空了?）"); return; }
+  if (DRY) { say("  [dry] 复制运行时 " + list.length + " 项 → " + rel(RUNTIME_DIR)); return; }
+  fs.rmSync(RUNTIME_DIR, { recursive: true, force: true });   // 旧版本残留会盖不掉,先清
+  list.forEach((f) => copyTree(path.join(HERE, f), path.join(RUNTIME_DIR, f)));
+  done.push("运行时 → " + rel(RUNTIME_DIR) + "（" + list.length + " 项）");
+}
+
+/* ---------------- 把 `code-forge` 这条命令放进 PATH ---------------- */
+/**
+ * 上一版漏了这一步:技能/角色/MCP 都装好了,但 `code-forge go` 是「command not found」——
+ * README 通篇在教人打 `code-forge xxx`,而装完根本没有这条命令。装了一半比没装更让人困惑。
+ *
+ * 从 clone 出来的仓库跑用 `npm link`(改代码立刻生效,开发的人要的是这个);
+ * 从副本跑用 `npm i -g <副本>`。两条都可能因为权限/npm 前缀失败 —— 失败不算致命,
+ * 打一行「你自己跑这条」就够了,别把整个安装判死。
+ */
+/**
+ * 找 npm 的 JS 入口,用**当前这个 node** 去跑它。
+ *
+ * 为什么不直接 execFileSync("npm"/"npm.cmd"):实测两条都不通 ——
+ *   npm      → ENOENT（execFile 不做 PATHEXT 补全）
+ *   npm.cmd  → EINVAL（CVE-2024-27980 之后 Node 不再允许不带 shell 直接起 .cmd/.bat）
+ * 而 shell:true 配一个可能带空格或 & 的路径参数,正是这个仓库刻意避开的那种拼接。
+ * 走 npm-cli.js 两个问题一起没有:参数按数组原样传,也不碰 shell。
+ */
+function npmCli() {
+  const dir = path.dirname(process.execPath);
+  const cands = [
+    path.join(dir, "node_modules", "npm", "bin", "npm-cli.js"),            // Windows / nvm4w
+    path.join(dir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js") // 类 Unix
+  ];
+  for (const c of cands) { if (fs.existsSync(c)) return c; }
+  return null;
+}
+
+function runNpm(args, cwd) {
+  const cli = npmCli();
+  if (!cli) return "找不到 npm（node 旁边没有 npm-cli.js）";
+  try {
+    execFileSync(process.execPath, [cli].concat(args), { cwd: cwd, stdio: "ignore" });
+    return null;
+  } catch (e) { return e.message.split("\n")[0]; }
+}
+
+function binCommandWorks() {
+  try {
+    const out = execFileSync(process.platform === "win32" ? "where" : "which",
+      ["code-forge"], { encoding: "utf8" });
+    return !!String(out).trim();
+  } catch (_) { return false; }
+}
+
+function installBin() {
+  const args = COPY ? ["i", "-g", RUNTIME_DIR] : ["link"];
+  const cwd = COPY ? process.cwd() : HERE;
+  if (DRY) { say("  [dry] npm " + args.join(" ") + (COPY ? "" : "（在 " + rel(HERE) + "）")); return; }
+  const err = runNpm(args, cwd);
+  if (err) {
+    failed.push("`code-forge` 没能放进 PATH（" + err + "）。自己跑一次:  npm " + args.join(" ") +
+      (COPY ? "" : "   （在 " + rel(HERE) + " 里）") +
+      "\n    不装也能用,只是要打全:  node " + rel(path.join(RUNTIME, "server.js")) + " go \"…\"");
+    return;
+  }
+  if (binCommandWorks()) {
+    done.push("`code-forge` 命令（npm " + args.join(" ") + "）");
+  } else {
+    // npm 说成功但 which 找不到 = npm 的全局 bin 目录不在 PATH 里。这是个**用户侧**问题,
+    // 得说清楚是哪一段没接上,否则他只会觉得「装了但没用」。
+    let prefix = "（npm prefix 取不到）";
+    const cli = npmCli();
+    if (cli) {
+      try { prefix = String(execFileSync(process.execPath, [cli, "prefix", "-g"],
+        { encoding: "utf8" })).trim(); } catch (_) {}
+    }
+    failed.push("npm 装成功了,但 PATH 里还是找不到 `code-forge` —— " +
+      "npm 的全局 bin 目录没在 PATH 里。把这个目录加进 PATH:  " + prefix);
+  }
+}
+
+function removeBin() {
+  // 两种装法都清:npm link 装的(unlink)与 npm i -g 装的(rm -g)。
+  // ⚠ 新版 npm 的 unlink 在没有 link 记录时会直接报错 —— 所以 rm -g 兜底必须无条件跑。
+  if (DRY) { say("  [dry] npm unlink / npm rm -g code-forge"); return; }
+  let removed = false;
+  if (!COPY && fs.existsSync(path.join(HERE, "package.json"))) {
+    if (!runNpm(["unlink"], HERE)) removed = true;
+  }
+  if (!runNpm(["rm", "-g", "code-forge"], process.cwd())) removed = true;
+  if (removed) done.push("`code-forge` 命令（已从 PATH 移除 —— 终端不需要认识它）");
+  else skipped.push("`code-forge` 命令（PATH 里本来就没有）");
+}
+
+function removeRuntime() {
+  if (!fs.existsSync(RUNTIME_DIR)) { skipped.push(rel(RUNTIME_DIR) + "（本来就没有）"); return; }
+  if (DRY) { say("  [dry] 删 " + rel(RUNTIME_DIR)); return; }
+  fs.rmSync(RUNTIME_DIR, { recursive: true, force: true });
+  done.push("删 " + rel(RUNTIME_DIR));
+}
+
 /* ---------------- 技能 / 角色 / 命令 ---------------- */
 const SKILL_SRC = path.join(HERE, "skills", "code-forge", "SKILL.md");
 const SKILL_DEST = path.join(CLAUDE_DIR, "skills", "code-forge", "SKILL.md");
@@ -83,7 +222,21 @@ function commandMarkdown() {
     "",
     "用 code-forge 技能在这个目标上跑一次对抗回环：$ARGUMENTS",
     "",
-    "按技能里的协议走：先确认判据命令（一条现在就能跑、能反映目标的命令；有量的话配上 metric），",
+    // ⚠ 空目标那两行不是废话:实测用户只打 `/code-forge` 时,模型照着下面那句
+    //   「先确认判据命令」直接开扫仓库去了 —— 指令的第一条必须是把目标立住。
+    "上一行冒号后面是空的、或含糊到一句话都不成（「优化一下」）时：这一个回合**只做一件事：等目标**。",
+    "对话里刚讨论过具体问题就调 AskUserQuestion（header「目标」）把它凝成 1~2 条候选让我选",
+    "（我也能选 Other 自己打）；没有现成上下文就只输出一行「目标：要做什么？」然后停，等我下一条消息。",
+    "禁止：扫仓库、找判据、列菜单、解释工作原理、调 loop_begin。目标立住之前这些都不许发生。",
+    "",
+    "目标立住之后按技能里的协议走：带着目标看一眼仓库、给 2~4 条判据命令候选让我挑",
+    "（Claude Code 里用 AskUserQuestion 摆选项；一条现在就能跑、能反映目标的命令；有量的话配上 metric）。",
+    "顺序是铁律：**先配置后确认**。判据之后用 AskUserQuestion 出配置卡（一卡最多 4 题：",
+    "模型分配/轮数(含不限)/时限/必要时 streak，每题推荐排第一，我一路回车就是全默认），",
+    "配置卡答完才出确认卡：小结 + 「就这么开跑？」(开跑推荐/再改一项/取消)。",
+    "不许用「开跑?不满意再选改」代替 —— 那是把改的成本藏在确认后面。",
+    "开局流程由 loop_begin 的状态机编排，你只当手：每次回复只给当前一步的指令和 token，",
+    "照做后带 token 重调；乱序/跳步会被弹回。连确认卡的小结都是它拼好的 —— 原样摆，不要改写。",
     "再 loop_begin 开局并把监控台网址告诉我，然后每轮把角色派给 forge-proposer / forge-critic",
     "（它们各绑不同模型）、各自 loop_say，一轮结束调 loop_gate。",
     "",
@@ -95,7 +248,7 @@ function commandMarkdown() {
 
 /* ---------------- MCP ---------------- */
 function mcpArgs() {
-  return ["node", path.join(HERE, "server.js"), "--mcp"];
+  return ["node", path.join(RUNTIME, "server.js"), "--mcp"];
 }
 
 function haveClaudeCli() {
@@ -129,6 +282,84 @@ function tryClaudeCli() {
   } catch (_) { return false; }
 }
 
+/* ---------------- 别的宿主的 MCP ---------------- */
+/**
+ * 给**除 Claude Code 之外**、这台机器上确实装了的宿主也注册上。
+ *
+ * 两条纪律:
+ *   ① **只碰装了的**。给没装的工具凭空造一个配置文件,是往人家目录里乱扔东西。
+ *   ② 改别人的配置文件之前先备份。那是他们的主配置,不是我们的。
+ */
+function registerOtherHosts() {
+  const adapters = require("./adapters.js");
+  const cli = require("./agentcli.js");
+  const cmd = mcpArgs();
+
+  adapters.all().forEach(function (a) {
+    if (a.id === "claude") return;             // 它走上面那条专门的路(有 CLI 优先)
+    if (!a.mcp) return;
+    if (!cli.which(a.bin)) return;             // ① 没装就不碰
+
+    if (a.mcp.kind === "cli") {
+      const args = UNINSTALL ? a.mcp.remove(MCP_NAME) : a.mcp.add(MCP_NAME, cmd);
+      if (DRY) { say("  [dry] " + a.bin + " " + args.join(" ")); return; }
+      // 先无条件 remove 一次再 add —— 否则重复装会撞「已存在」而整条失败(幂等)
+      if (!UNINSTALL) cli.exec(a.bin, a.mcp.remove(MCP_NAME));
+      const r = cli.exec(a.bin, args);
+      if (r.error || r.status !== 0) {
+        failed.push(a.label + " 的 MCP 没注册上（" + (r.error || ("退出码 " + r.status) ) +
+          "）。自己跑:  " + a.bin + " " + args.join(" "));
+      } else {
+        done.push(a.label + " 的 MCP" + (UNINSTALL ? "（已移除）" : ""));
+      }
+      return;
+    }
+
+    if (a.mcp.kind === "json") {
+      patchJsonConfig(a, cmd);
+      return;
+    }
+
+    // 认不出的注册方式:不猜着写,把该加什么原样打出来让人自己贴
+    failed.push(a.label + " 的 MCP 要手动加（注册方式 " + a.mcp.kind + " 我不会写）：" +
+      JSON.stringify({ command: cmd[0], args: cmd.slice(1) }));
+  });
+}
+
+/** 往某个宿主的 JSON 配置里加/删一条 MCP。只碰那一个键,其余原样保留。 */
+function patchJsonConfig(a, cmd) {
+  const file = a.mcp.file;
+  const key = a.mcp.key || "mcpServers";
+  let cfg = {};
+  if (fs.existsSync(file)) {
+    try { cfg = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")); }
+    catch (e) {
+      failed.push(rel(file) + " 解析失败（" + e.message + "），没有改它。请手动加 " + key + "." + MCP_NAME);
+      return;
+    }
+  } else if (UNINSTALL) {
+    skipped.push(rel(file) + "（本来就没有）");
+    return;
+  }
+  cfg[key] = cfg[key] || {};
+  if (UNINSTALL) {
+    if (!cfg[key][MCP_NAME]) { skipped.push(rel(file) + " 里本来就没有 " + MCP_NAME); return; }
+    delete cfg[key][MCP_NAME];
+  } else {
+    cfg[key][MCP_NAME] = a.mcp.entry(cmd);
+  }
+  if (DRY) { say("  [dry] 改 " + rel(file) + " 的 " + key + "." + MCP_NAME); return; }
+  // ② 先备份 —— 这是别人的主配置
+  try { if (fs.existsSync(file)) fs.copyFileSync(file, file + ".bak-code-forge"); } catch (_) {}
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+    done.push(rel(file) + " 的 " + key + "." + MCP_NAME + (UNINSTALL ? "（已移除）" : ""));
+  } catch (e) {
+    failed.push("写不了 " + rel(file) + "：" + e.message);
+  }
+}
+
 function patchClaudeJson() {
   // 兜底:直接改 ~/.claude.json 的 mcpServers。只碰这一个键,其余原样保留。
   const file = path.join(HOME, ".claude.json");
@@ -156,15 +387,132 @@ function patchClaudeJson() {
   return true;
 }
 
+/* ---------------- Codex 的 /code-forge（用户级自定义 prompt） ---------------- */
+/**
+ * Claude Code 那边装的是 ~/.claude/commands/code-forge.md;Codex 的对应物是
+ * ~/.codex/prompts/code-forge.md —— **以前根本没装**,于是「跨宿主」在 Codex 聊天里
+ * 是断的:MCP 工具注册了,但 /code-forge 这个入口不存在,用户只能靠自己描述整个协议。
+ *
+ * 内容按 Codex 的现实裁过,不是照抄 Claude Code 那份:
+ *  - 没有 AskUserQuestion → 候选摆编号列表让人打号;
+ *  - 没有子 agent 模型覆盖 → 自己按角色轮流发言(反驳强度降一档,技能里写过);
+ *  - 没有 prompt 钩子 → 空目标只能靠这段指令拦(要花一次模型调用,如实认)。
+ */
+function codexPromptMarkdown() {
+  return [
+    "用 code-forge 的 MCP 工具（loop_begin / loop_say / loop_gate / loop_status / loop_end）",
+    "在这个目标上跑一次对抗回环：$ARGUMENTS",
+    "",
+    "上一行冒号后面是空的、或含糊到一句话都不成（「优化一下」）时：这一个回合**只做一件事：等目标**。",
+    "对话里刚讨论过具体问题就把它凝成一句候选目标向我确认；否则只输出一行「目标：要做什么？」",
+    "然后停，等我下一条消息。禁止：扫仓库、找判据、列菜单、调 loop_begin。",
+    "",
+    "目标立住之后：带着目标看一眼仓库，给 2~4 条判据命令候选摆成编号列表让我挑。",
+    "「连续 N 轮干净才算达标」类目标给 goal.streak=N；「不限轮数」给 budget.rounds=0（要一并确认时限）",
+    "（只提议仓库里真实存在的命令，与目标相关的排前面，末尾加「0) 我自己填」），",
+    "然后 loop_begin 开局并把监控台网址告诉我。",
+    "",
+    "每一轮：先 loop_say 一条 kind=route 报「已派出谁」（子 agent 一跑就是几分钟，",
+    "派出前不报,直播就是长时间空屏）。然后**用 loop_agent 把角色派成独立进程**",
+    "（这是真隔离：独立会话、可指定模型、反驳者在工具层就是只读）。",
+    "prompt 要自带全部上下文 —— 它看不见这段对话。",
+    "结果会自动 loop_say，你不必再报，读返回的 text 决定下一步。",
+    "loop_agent 报错起不来时才退回你自己按角色轮流做事（此时反驳强度降一档，要更狠地找反例，",
+    "且每个角色发言后立刻 loop_say）。一轮结束调 loop_gate。",
+    "",
+    "记住三条：达标只有 loop_gate 能判；判据不许为了达标而放宽或换掉；",
+    "停了要如实说是 stopReason 七种原因里的哪一条，「烧完预算停」不许说成「已完成」。",
+    ""
+  ].join(String.fromCharCode(10));
+}
+
+const CODEX_PROMPT = path.join(HOME, ".codex", "prompts", "code-forge.md");
+
+function installCodexPrompt() {
+  const cli = require("./agentcli.js");
+  if (!cli.which("codex")) { return; }          // 没装 codex 就不碰它的目录
+  if (UNINSTALL) { removeFile(CODEX_PROMPT); return; }
+  writeFile(CODEX_PROMPT, codexPromptMarkdown());
+}
+
+/* ---------------- UserPromptSubmit 钩子：/code-forge 空目标 → 只等输入 ---------------- */
+/**
+ * 空目标时把模型钉死在「等目标」上。钩子(hookprompt.js)注入一条指令(exit 0 + stdout
+ * 进上下文):这一回合只许问目标(有上下文用 AskUserQuestion,没有就一行提问),
+ * 禁止扫仓库/找判据/loop_begin。
+ * 为什么不拦截(exit 2,改过一次):拦截零 token,但体感是「被拒掉重打」——
+ * 用户要的是备注输入那种「停下来等我打字」,而输入等待只有模型侧画得出来。
+ *
+ * 三条纪律:
+ *  ① 幂等 —— 已有我们的条目就替换(路径可能变了),不重复追加;
+ *  ② 可卸 —— uninstall 只摘 command 里带 hookprompt.js 的那几条,别人的钩子一根不动;
+ *  ③ 改前备份 —— settings.json 是别人的主配置。
+ */
+function patchHooks() {
+  const file = path.join(CLAUDE_DIR, "settings.json");
+  let cfg = {};
+  if (fs.existsSync(file)) {
+    try { cfg = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")); }
+    catch (e) {
+      failed.push(rel(file) + " 解析失败（" + e.message + "），钩子没装。空目标仍会走模型问一句。");
+      return;
+    }
+  }
+  const ours = function (h) {
+    return h && h.type === "command" && /hookprompt\.js/.test(String(h.command || ""));
+  };
+  cfg.hooks = cfg.hooks || {};
+  let list = Array.isArray(cfg.hooks.UserPromptSubmit) ? cfg.hooks.UserPromptSubmit : [];
+  // 先把我们旧的摘干净（幂等 + 卸载共用这一步）
+  list = list.map(function (m) {
+    if (!m || !Array.isArray(m.hooks)) return m;
+    const rest = m.hooks.filter(function (h) { return !ours(h); });
+    return rest.length === m.hooks.length ? m : Object.assign({}, m, { hooks: rest });
+  }).filter(function (m) { return m && Array.isArray(m.hooks) && m.hooks.length; });
+
+  if (!UNINSTALL) {
+    list.push({ hooks: [{ type: "command",
+      // 路径引起来:用户名带空格的 home 目录不引就散成两个参数。正斜杠是因为
+      // 这条命令会被 shell 再解析一遍,反斜杠在里面就是转义符。
+      command: "node " + JSON.stringify(
+        path.join(RUNTIME, "hookprompt.js").split("\\").join("/")),
+      timeout: 10 }] });
+  }
+  if (!list.length) delete cfg.hooks.UserPromptSubmit; else cfg.hooks.UserPromptSubmit = list;
+  if (!Object.keys(cfg.hooks).length) delete cfg.hooks;
+
+  if (DRY) { say("  [dry] 改 " + rel(file) + " 的 hooks.UserPromptSubmit"); return; }
+  try { if (fs.existsSync(file)) fs.copyFileSync(file, file + ".bak-code-forge"); } catch (_) {}
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + String.fromCharCode(10), "utf8");
+    done.push(rel(file) + " hooks.UserPromptSubmit" +
+      (UNINSTALL ? "（已移除）" : "（/code-forge 空目标 → 停下来等你输入目标）"));
+  } catch (e) {
+    failed.push("写不了 " + rel(file) + "：" + e.message);
+  }
+}
+
 /* ---------------- 跑 ---------------- */
 say((UNINSTALL ? "卸载" : "安装") + " code-forge → " + rel(CLAUDE_DIR) + (DRY ? "  [dry-run]" : ""));
+if (!UNINSTALL && COPY) {
+  say(C_dim(EPHEMERAL
+    ? "  在临时目录里跑（npx?）—— 运行时会复制到 " + rel(RUNTIME_DIR) + " 再注册，否则缓存一清就失效"
+    : "  --copy：运行时复制到 " + rel(RUNTIME_DIR)));
+}
 say("");
 
 if (UNINSTALL) {
   removeFile(SKILL_DEST);
   AGENT_FILES.forEach((f) => removeFile(path.join(CLAUDE_DIR, "agents", f)));
   removeFile(CMD_DEST);
+  removeBin();   // 旧版装过的 bin 一并清掉
+  removeRuntime();
 } else {
+  if (COPY) installRuntime();
+  // （2026-08 降级）不再往 PATH 里放 `code-forge` —— 终端不需要认识它:
+  // 直播窗口在开跑时自动弹出,其余观察面都在网页监控台上。旧版装过的顺手清掉。
+  removeBin();
   if (!fs.existsSync(SKILL_SRC)) {
     failed.push("找不到 " + rel(SKILL_SRC) + " —— 是不是在别的目录里跑的?");
   } else {
@@ -176,12 +524,16 @@ if (UNINSTALL) {
   writeFile(CMD_DEST, commandMarkdown());
 }
 
+patchHooks();
+installCodexPrompt();
 const viaCli = tryClaudeCli();
 if (!viaCli) {
   patchClaudeJson();
 } else if (!DRY) {
   done.push("MCP " + MCP_NAME + (UNINSTALL ? "（已移除）" : "（claude mcp add --scope user）"));
 }
+// 别的宿主也一并接上 —— 「跨宿主」不能只是文档里的一句话
+registerOtherHosts();
 
 /* ---------------- 报告 ---------------- */
 say("");
@@ -196,11 +548,13 @@ say("");
 if (UNINSTALL) {
   say("卸载完成。重开一个 Claude Code 会话生效。");
 } else {
-  say("装完了。**重开一个 Claude Code 会话**才会加载,然后:");
+  say("装完了。**重开一个 Claude Code 会话**才会加载,然后在聊天里:");
   say("");
   say("  /code-forge 把 xxx 修掉，pytest 全绿且覆盖率 ≥ 80%");
   say("");
-  say("角色与模型（可在 " + rel(path.join(CLAUDE_DIR, "agents")) + " 里改 model: 那一行）:");
+  say("终端不需要认识 code-forge:开跑时自动弹终端直播窗口,网页监控台地址也会一并给出。");
+  say("");
+  say("角色与模型（可在 ~\.claude\agents 里改 model: 那一行,或聊天里点「改模型」）:");
   say("  forge-proposer  sonnet  读写+Bash   提最小改动并落地");
   say("  forge-critic    opus    只读        专门找反例（工具层面没有写权限）");
   say("  forge-reviewer  sonnet  只读        判绿后查是否把判据糊弄过去了");

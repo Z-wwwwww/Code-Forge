@@ -111,6 +111,9 @@ button{font-family:inherit;color:inherit}
 .ritem .me{font-size:10px;font-family:var(--mono);color:var(--tx-7)}
 .ritem .d{width:6px;height:6px;border-radius:50%}
 
+.conn.pulse{font-weight:700;font-size:12.5px;letter-spacing:.5px}
+.rolepulse{font-family:var(--mono);font-weight:700;color:var(--acc);margin-left:6px}
+.conn.pulse.ok{color:var(--acc,#6FD3C7);border-color:currentColor}
 /* token ranking */
 .blk-rank{padding:10px 14px 12px}
 .blk-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
@@ -299,12 +302,14 @@ var BAR_LEGEND = ["未参与本轮判定","被采纳","主导裁决","进行中"
 var SEV_COLORS = { HIGH:"#E2707A", MED:"#E8C468", LOW:"#8B95A2", OPEN:"#6FD3C7" };
 var FALLBACK_COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
 
-var STORE = { run:null, roles:{}, roleOrder:[], rounds:[], byN:{}, streaming:null, ended:null, count:0, unknown:0 };
+var STORE = { run:null, roles:{}, roleOrder:[], rounds:[], byN:{}, streaming:null, ended:null, count:0, unknown:0,
+  usageTotal:null };
 // 服务端的回环状态(是否真的在跑)。页面自己猜不出来 —— 日志里没有 run.end 既可能是
 // 还在跑,也可能是进程早就没了,这两件事对「停止」按钮该不该出现是相反的。
 var SERVER = { active:false, lastReason:null, checked:false };
 var STOP_REASONS = {
-  goal_met:"达标停止", budget_tokens:"TOKEN 预算耗尽", budget_time:"超出时限",
+  goal_met:"达标停止（命令判过）", judged_met:"达标停止（评审判定）", reported_met:"达标停止（角色上报的指标）",
+  interrupted:"中断（上一局没收尾就断了 —— 已补账,不是还在跑）", budget_tokens:"TOKEN 预算耗尽", budget_time:"超出时限",
   max_rounds:"到达轮数上限", no_progress:"连续零进展", stopped:"手动停止",
   gate_broken:"判据本身失败", driver_error:"驱动异常"
 };
@@ -321,7 +326,8 @@ function ensureRole(id){
   if (!STORE.roles[id]) {
     STORE.roles[id] = { id:id, name:id, model:"—",
       color: FALLBACK_COLORS[STORE.roleOrder.length % FALLBACK_COLORS.length],
-      inTok:0, outTok:0, calls:0, tokUnknown:0 };
+      inTok:0, outTok:0, calls:0, tokUnknown:0,
+      cacheRead:0, cacheWrite:0, tools:{}, measured:false };
     STORE.roleOrder.push(id);
   }
   return STORE.roles[id];
@@ -337,6 +343,7 @@ function ensureRound(n){
   return STORE.byN[n];
 }
 function applyEvent(ev){
+  STORE.lastEventAt = Date.now();
   STORE.count++;
   switch (ev.t) {
     case "run.start":
@@ -345,7 +352,7 @@ function applyEvent(ev){
       // 硬盘上的历史一条不丢,只是视图切到最新这一次。
       if (STORE.run) {
         STORE.roles = {}; STORE.roleOrder = []; STORE.rounds = []; STORE.byN = {};
-        STORE.streaming = null; STORE.ended = null;
+        STORE.streaming = null; STORE.ended = null; STORE.usageTotal = null;
         state.round = null; state.follow = true; state.open = {}; state.roleFilter = null;
       }
       STORE.run = ev;
@@ -386,7 +393,33 @@ function applyEvent(ev){
       re.score = ev.score || "—";
       break;
     }
-    case "run.streaming": STORE.streaming = ev; break;
+    // 逐 agent 用量。执行者是我们自己 spawn 的 `claude -p` 时它每条消息都报 usage,
+    // 于是上面那句「拿不到」在这条路上不成立 —— 有真数就用真数,没有才写「不可得」。
+    case "usage": {
+      if (ev.total) { STORE.usageTotal = ev; break; }
+      // 按**名字**认回回环里那个角色。用 ev.agent(tool_use id)当 key 会多出一行同名的,
+      // 页面上就成了「提议者」和「提议者」两条账。
+      var uid = null;
+      for (var i = 0; i < STORE.roleOrder.length; i++) {
+        if (STORE.roles[STORE.roleOrder[i]].name === ev.role) { uid = STORE.roleOrder[i]; break; }
+      }
+      var ur = ensureRole(uid || ev.agent || ev.role);
+      if (!uid) ur.name = ev.role || ur.name;
+      if (ev.model) ur.model = ev.model;
+      ur.inTok += ev.in || 0;
+      ur.outTok += ev.out || 0;
+      ur.cacheRead = (ur.cacheRead || 0) + (ev.cacheRead || 0);
+      ur.cacheWrite = (ur.cacheWrite || 0) + (ev.cacheWrite || 0);
+      ur.measured = true;
+      Object.keys(ev.tools || {}).forEach(function(k){
+        ur.tools = ur.tools || {};
+        ur.tools[k] = (ur.tools[k] || 0) + ev.tools[k];
+      });
+      ensureRound(ev.round || 1).usage = (ensureRound(ev.round || 1).usage || 0) +
+        (ev.in || 0) + (ev.out || 0);
+      break;
+    }
+    case "run.streaming": STORE.streaming = ev; STORE.streamingAt = Date.now(); break;
     case "run.end":       STORE.ended = ev; refreshServer(); break;
     default:
       // 认不出的类型不静默吞掉:计数并在页头显示,否则「喂错了形状」看不出来
@@ -451,7 +484,13 @@ var state = { round:null, follow:true, mode:"live", open:{}, expandAll:false, ro
 var conn = { state:"connecting", since:0 };
 
 function k1(n){ return (n / 1000).toFixed(1) + "k"; }
-function tokLabel(tk){ tk = tk || {}; return k1(tk.in || 0) + " / " + k1(tk.out || 0); }
+function tokLabel(tk){
+  // null = 用量拿不到(聊天执行在用户订阅账上) —— 不显示,绝不写 0.0k(那是假账,实测被当成 bug 报过);
+  // 真 0(判据事件,executor=code)写「0」——「拿不到」和「真的是零」必须长得不一样
+  if (!tk) return "";
+  var t = (tk.in || 0) + (tk.out || 0);
+  return t === 0 ? "0" : k1(tk.in || 0) + " / " + k1(tk.out || 0);
+}
 function esc(s){
   return String(s == null ? "" : s)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
@@ -464,9 +503,18 @@ function renderHeader(round, isLive){
   var run = STORE.run || {};
   var dotC = isLive ? ACC : "#8B95A2";
   var t = totals();
+  var cost = STORE.usageTotal && typeof STORE.usageTotal.costUsd === "number"
+    ? STORE.usageTotal.costUsd : null;
+  // 页头显示的是**左栏各角色相加**。不拿 result 里的数冒充总数 —— 实测它跟逐条求和
+  // 对不上(in 19 vs 29、cacheRead 56789 vs 88551),而且它只覆盖某一次调用。
+  // 唯一能当全程用的是 total_cost_usd(=这次运行真花的钱),所以成本单独一格。
+  var rep = STORE.usageTotal;
+  var totShown = t.in + t.out;
+  var gap = rep ? Math.max(0, (rep.out || 0) - t.out) : 0;
   var tabs = [{ key:"live", label:"实时" }, { key:"replay", label:"复盘" }].map(function(tb){
     return '<button data-act="mode" data-v="' + tb.key + '"' + (state.mode === tb.key ? ' class="on"' : "") + ">" + esc(tb.label) + "</button>";
   }).join("");
+  var pulsePill = '<span class="conn" id="pulse" title="这个标志每秒自己转,不靠事件 —— 它停了才是页面真卡了"></span>';
   var connPill = conn.state === "open"
     ? '<span class="conn ok" title="事件流已连接">流 · ' + STORE.count + "</span>"
     : '<span class="conn bad" title="事件流未连接,正在重试">流 · ' + (conn.state === "connecting" ? "连接中" : "重连中") + "</span>";
@@ -479,7 +527,7 @@ function renderHeader(round, isLive){
     : "";
   var stopBtn = SERVER.active
     ? '<button class="expandall" data-act="stopRun" title="打断在途调用；已花的会记成估算">停止回环</button>'
-    : (STORE.count ? '<a class="expandall" href="/setup">新建回环</a>' : "");
+    : "";   // （执行路线删了:新建回环去 coding agent 里 /code-forge）
   return '<header class="hdr">' +
       '<div class="brand"><span class="nm">ADVERSARIAL·MCP</span><span class="ver">' + esc(run.version || "") + "</span></div>" +
       '<div class="vr"></div>' +
@@ -487,16 +535,25 @@ function renderHeader(round, isLive){
         '<div class="t">' + (run.session ? "session · " + esc(run.session) : "等待 run.start …") + "</div>" +
         '<div class="s">' + esc([run.repo, run.branch ? "branch " + run.branch : "", run.client ? "client: " + run.client : ""].filter(Boolean).join(" · ")) + "</div>" +
       "</div>" +
-      '<div class="grow"></div>' + endPill + stopBtn + connPill + unknown +
+      '<div class="grow"></div>' + endPill + stopBtn + pulsePill + connPill + unknown +
       '<div class="status" style="border-color:' + (isLive ? ACC + "4D" : "#232830") + ";background:" + (isLive ? ACC + "14" : "#14181D") + '">' +
         '<span class="status-dot" style="background:' + dotC + ";" + (isLive ? "animation:livePulse 1.6s ease-in-out infinite" : "") + '"></span>' +
         '<span class="lb" style="color:' + dotC + '">' + (isLive ? "LIVE" : "回放 REPLAY") + "</span>" +
       "</div>" +
       '<div class="tabs">' + tabs + "</div>" +
       '<div class="kpis">' +
-        '<div class="kpi" title="' + (t.in + t.out ? "" : "宿主执行时用量在你的订阅账上,监控台拿不到") + '">' +
-          '<span class="v">' + (t.in + t.out ? k1(t.in + t.out) : "—") + '</span>' +
-          '<span class="k">' + (t.in + t.out ? "TOKENS 总计" : "TOKENS 不可得") + "</span></div>" +
+        '<div class="kpi" title="' + esc(totShown
+            ? "左栏各角色相加（in " + k1(t.in) + " / out " + k1(t.out) + "），数字是 agent 自己报的" +
+              (gap ? "。CLI 收尾另报了 " + k1(gap) + " 输出摊不到具体角色（thinking 不带归属信息），" +
+                     "所以各角色的 out 是下界" : "")
+            : "从聊天里驱动时执行者不向监控台报账,用量在你的订阅账上 —— 这条路上拿不到") + '">' +
+          '<span class="v">' + (totShown ? k1(totShown) : "—") + '</span>' +
+          '<span class="k">' + (totShown ? "TOKENS 总计" : "TOKENS 未上报") + "</span></div>" +
+        // 成本只显示 agent 自己报的那个数。查价目表乘一遍算出来的是编的,不写。
+        (cost != null
+          ? '<div class="kpi" title="claude -p 收尾时自己报的 total_cost_usd"><span class="v">$' +
+            cost.toFixed(2) + '</span><span class="k">成本</span></div>'
+          : "") +
         '<div class="kpi"><span class="v">' + STORE.rounds.length + '</span><span class="k">对抗轮次</span></div>' +
       "</div>" +
     "</header>";
@@ -530,7 +587,14 @@ function renderRanking(){
     var unknown = !total && r.tokUnknown > 0;
     // 压根没发言过的角色写「未发言」。显示 0.0k 会被读成「量过了,是 0」——
     // 「没发生」和「发生了但是 0」是两件事(判据那行才是真的 0)。
-    var silent = r.calls === 0;
+    // 有用量上报的不算「没发生」:协调者从不 loop_say,但它实实在在烧了 token。
+    var silent = r.calls === 0 && !r.measured;
+    // 工具次数:「它到底在干什么」比一个 token 数直观得多
+    // MCP 全名 mcp__code-forge__loop_begin 一条就把这行占满,只留最后一段
+    var toolTxt = Object.keys(r.tools || {})
+      .map(function(k){ return [k.replace(/^mcp__.+__/, ""), r.tools[k]]; })
+      .sort(function(a,b){ return b[1] - a[1]; }).slice(0, 3)
+      .map(function(p){ return p[0] + "×" + p[1]; }).join(" ");
     return '<button data-act="rank" data-v="' + r.id + '" style="opacity:' + op + '" title="' +
         esc(r.duty || r.name) + (unknown ? " · 用量在宿主账上,这里拿不到" : "") + '">' +
       '<span class="top">' +
@@ -547,9 +611,11 @@ function renderRanking(){
       '<span class="foot">' +
         (silent ? '<span>本回环还没轮到它</span>'
           : unknown ? '<span>用量不可得（宿主执行）</span>'
-          : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>") +
+          : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>" +
+            (r.cacheRead ? "<span>缓存 " + k1(r.cacheRead) + "</span>" : "")) +
         "<span>" + esc(r.model) + "</span>" +
-        (unknown || silent ? "" : "<span>" + r.calls + " 次</span>") +
+        (unknown || silent ? "" : "<span>" + (r.calls ? r.calls + " 次发言" : "不发言") + "</span>") +
+        (toolTxt ? "<span>" + esc(toolTxt) + "</span>" : "") +
       "</span>" +
     "</button>";
   }).join("");
@@ -773,8 +839,8 @@ function renderEmpty(){
         "<h1>还没有事件</h1>" +
         "<p>这个页面不存任何状态,它只是把 <code>/events</code> 这条 append-only 流 reduce 出来。" +
         "喂第一条进去就会立刻出现在这里。</p>" +
-        '<p><a class="expandall" href="/setup" style="display:inline-block">配置并启动一次回环 →</a>' +
-        ' <span class="dim" style="margin-left:8px">加角色、定目的、设预算</span></p>' +
+        '<p>开跑在 coding agent 里：<code>/code-forge &lt;目标&gt;</code>' +
+        ' <span class="dim" style="margin-left:8px">（Claude Code / Codex；这页只负责看）</span></p>' +
         "<pre>code-forge --demo --live   # 或先看一遍示例回环\n\n" +
         "curl -X POST localhost:" + esc(port) + "/events \\\n" +
         "  -H 'content-type: application/json' \\\n" +
@@ -843,6 +909,19 @@ app.addEventListener("click", function(ev){
 });
 
 /* 事件流:EventSource 自带重连,并把 Last-Event-ID 带回去续传 */
+/* 脉搏:像 Claude Code 那样一直在动的标志。**不靠事件驱动**(每秒自转一格),
+   于是「在动但没新事件」和「真卡死」一眼可分(实测被当成卡死问过两次)。 */
+var SPINF = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"], spinI = 0;
+setInterval(function(){
+  var el = document.getElementById("pulse");
+  if (!el) return;
+  if (STORE.ended) { el.textContent = "■ 档案"; el.className = "conn"; return; }
+  var ago = STORE.lastEventAt ? Math.round((Date.now() - STORE.lastEventAt) / 1000) : null;
+  var agoTxt = ago == null ? "" : ago < 3 ? "刚刚" : ago < 90 ? ago + "s 前" : Math.round(ago / 60) + "m 前";
+  el.textContent = SPINF[(spinI++) % SPINF.length] + (agoTxt ? " 最后事件 " + agoTxt : " 等第一条事件");
+  el.className = "conn pulse " + (ago != null && ago > 300 ? "bad" : "ok");
+}, 120);
+
 var es = new EventSource("/events");
 es.onopen = function(){ conn.state = "open"; schedule(); };
 es.onerror = function(){ conn.state = "retry"; schedule(); };   // 断了要看得见,不许静默
