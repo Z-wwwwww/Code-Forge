@@ -115,7 +115,7 @@ button{font-family:inherit;color:inherit}
 .rolepulse{font-family:var(--mono);font-weight:700;color:var(--acc);margin-left:6px}
 .conn.pulse.ok{color:var(--acc,#6FD3C7);border-color:currentColor}
 /* token ranking */
-.blk-rank{padding:10px 14px 12px}
+.blk-rank{padding:10px 14px 20px}   /* 20 = 左栏最后一块的收尾留白(原来由模型对比那块兜着) */
 .blk-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
 .blk-head .scope{font-size:10px;font-family:var(--mono);color:#3E4650}
 .rank{display:flex;flex-direction:column;gap:9px}
@@ -134,16 +134,6 @@ button{font-family:inherit;color:inherit}
 .legend i{width:14px;height:5px;border-radius:3px;background:var(--acc)}
 
 /* models */
-.blk-models{padding:12px 14px 20px}
-.blk-models .seclab{margin-bottom:11px;display:block}
-.mlist{display:flex;flex-direction:column;gap:8px}
-.mcard{border:1px solid var(--line);border-radius:7px;padding:8px 9px;background:var(--bg-card)}
-.mcard .top{display:flex;align-items:center;gap:7px;margin-bottom:7px}
-.mcard .nm{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--tx-1)}
-.mcard .ad{font-family:var(--mono);font-size:10px}
-.mcard .bars{display:flex;gap:3px;margin-bottom:6px}
-.mcard .bars i{flex:1;height:14px;border-radius:2px}
-.mcard .foot{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:var(--tx-8)}
 
 /* ---------------- main ---------------- */
 main{min-width:0;height:calc(100vh - 56px);overflow-y:auto;background:var(--bg)}
@@ -312,8 +302,6 @@ var KIND = {
   patch:  { label:"PATCH",   color:"#7EA8F0" }, test:   { label:"TEST",    color:"#63C68E" },
   audit:  { label:"AUDIT",   color:"#C08CF0" }, route:  { label:"ROUTE",   color:"#8B95A2" }
 };
-var BAR_COLORS = ["#171B21","#63C68E","#E8C468","#3A4450"];
-var BAR_LEGEND = null;   // 见 L10N.*.barLegend(按 run.lang 取)
 var SEV_COLORS = { HIGH:"#E2707A", MED:"#E8C468", LOW:"#8B95A2", OPEN:"#6FD3C7" };
 var FALLBACK_COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
 /* 工具流在进行中那一轮里画几行。多了会把聊天记录顶出视口 —— 而人往下看的正是
@@ -336,7 +324,6 @@ var L10N = {
       idle_spin:"空跑（没人真的改过东西）", stalled:"停滞（角色进程卡住）", abandoned:"agent 放弃",
       judge_broken:"评审判据本身失败", gate_broken:"判据本身失败", driver_error:"驱动异常"
     },
-    barLegend: ["未参与本轮判定","被采纳","主导裁决","进行中"],
     roundN: function(n){ return "第 " + n + " 轮"; },
     evConf: function(e,c){ return e + " 事件 · " + c + " 分歧"; },
     liveEv: function(e){ return "进行中 · " + e + " 事件"; },
@@ -345,14 +332,13 @@ var L10N = {
     stopBtn: "停止回环", stopping: "正在停止…",
     waitingStart: "等待 run.start …", replayTag: "回放 REPLAY",
     tokTotal: "TOKENS 总计", tokNone: "TOKENS 未上报", cost: "成本", advRounds: "对抗轮次",
-    noRoles: "还没有角色", noModels: "还没有模型", noRounds: "还没有轮次", noPatches: "还没有补丁",
+    noRoles: "还没有角色", noRounds: "还没有轮次", noPatches: "还没有补丁",
     noConflicts: "本轮还没有记录分歧", noEventsRole: "该角色在本轮没有事件。",
     silent: "未发言", says: function(n){ return n + " 次发言"; }, noSay: "不发言",
     notYet: "本回环还没轮到它", noUsageYet: "暂无用量（干完活才有账）",
     cacheAcc: "缓存重读累计 ",
-    adopted: function(a,r){ return "采纳 " + a + "/" + r + " 轮"; },
     secRounds: "轮次 ROUNDS", secTok: "TOKEN 消耗排行", secScope: "全会话",
-    legIn: "输入", legOut: "输出", secModels: "模型对比 MODELS",
+    legIn: "输入", legOut: "输出",
     secConf: "本轮分歧点 CONFLICTS", secPatch: "代码演进 PATCH TRAIL",
     all: "全部", targets: "针对", waitNext: "等待下一个事件…", thisRound: "本轮",
     feedNote: "此刻在动的手 · 不入档", feedSkipped: function(n){ return "… 中间 "+n+" 条动作没跟上（它手比这面板快）"; },
@@ -380,7 +366,6 @@ var L10N = {
       stalled:"Stalled (role process hung)", abandoned:"Agent gave up",
       judge_broken:"Judge gate itself failed", gate_broken:"Gate itself failed", driver_error:"Driver error"
     },
-    barLegend: ["not in this round's verdict","adopted","led the verdict","in progress"],
     roundN: function(n){ return "Round " + n; },
     evConf: function(e,c){ return e + " events · " + c + " conflicts"; },
     liveEv: function(e){ return "in progress · " + e + " events"; },
@@ -389,14 +374,13 @@ var L10N = {
     stopBtn: "Stop loop", stopping: "stopping…",
     waitingStart: "waiting for run.start …", replayTag: "REPLAY",
     tokTotal: "TOKENS TOTAL", tokNone: "TOKENS UNREPORTED", cost: "cost", advRounds: "rounds",
-    noRoles: "no roles yet", noModels: "no models yet", noRounds: "no rounds yet", noPatches: "no patches yet",
+    noRoles: "no roles yet", noRounds: "no rounds yet", noPatches: "no patches yet",
     noConflicts: "no conflicts recorded this round", noEventsRole: "this role has no events this round.",
     silent: "silent", says: function(n){ return n + " statements"; }, noSay: "never speaks",
     notYet: "not its turn yet this loop", noUsageYet: "no usage yet (accounts appear after it works)",
     cacheAcc: "cache re-reads (cumulative) ",
-    adopted: function(a,r){ return "adopted " + a + "/" + r + " rounds"; },
     secRounds: "ROUNDS", secTok: "TOKEN RANKING", secScope: "whole session",
-    legIn: "input", legOut: "output", secModels: "MODELS",
+    legIn: "input", legOut: "output",
     secConf: "CONFLICTS THIS ROUND", secPatch: "PATCH TRAIL",
     all: "all", targets: "targets", waitNext: "waiting for the next event…", thisRound: "this round",
     feedNote: "live actions · not archived", feedSkipped: function(n){ return "… "+n+" actions skipped (it works faster than this panel)"; },
@@ -592,35 +576,6 @@ function winColorOf(rd){
   var r = rd.winnerRole && STORE.roles[rd.winnerRole];
   return r ? r.color : "#8B95A2";
 }
-// 模型对比:每轮一格。3 进行中 / 2 主导裁决(出 verdict 的角色) / 1 被采纳(胜方角色) / 0 未参与
-function modelStats(){
-  var names = [], byModel = {};
-  roleList().forEach(function(r){
-    if (names.indexOf(r.model) < 0) { names.push(r.model); byModel[r.model] = []; }
-    byModel[r.model].push(r);
-  });
-  return names.map(function(m){
-    var rs = byModel[m];
-    var ids = rs.map(function(r){ return r.id; });
-    var bars = STORE.rounds.map(function(rd){
-      var acted = rd.events.some(function(e){ return ids.indexOf(e.role) >= 0; });
-      if (rd.live) return acted ? 3 : 0;
-      var verdict = rd.events.filter(function(e){ return e.kind === "verdict"; }).pop();
-      if (verdict && ids.indexOf(verdict.role) >= 0) return 2;
-      if (rd.winnerRole && ids.indexOf(rd.winnerRole) >= 0) return 1;
-      return 0;
-    });
-    return {
-      name: m,
-      tokens: rs.reduce(function(a,r){ return a + r.inTok + r.outTok; }, 0),
-      roles: rs.map(function(r){ return r.name; }).join(" · "),
-      adopted: bars.filter(function(v){ return v === 1; }).length,
-      rounds: STORE.rounds.length,
-      bars: bars
-    };
-  });
-}
-
 /* ---------------- 交互状态 ---------------- */
 var state = { round:null, follow:true, mode:"live", open:{}, expandAll:false, roleFilter:null };
 var conn = { state:"connecting", since:0 };
@@ -783,21 +738,6 @@ function renderRanking(){
     "</button>";
   }).join("");
 }
-function renderModels(){
-  var ms = modelStats();
-  if (!ms.length) return '<div class="empty-min">' + WT().noModels + "</div>";
-  return ms.map(function(m){
-    var bars = m.bars.map(function(v,i){
-      return '<i style="background:' + (BAR_COLORS[v] || BAR_COLORS[0]) + '" title="R' + (i + 1) + " · " + esc(WT().barLegend[v]) + '"></i>';
-    }).join("") || '<i style="background:' + BAR_COLORS[0] + '"></i>';
-    return '<div class="mcard">' +
-      '<div class="top"><span class="nm">' + esc(m.name) + '</span><span class="grow"></span>' +
-        '<span class="ad" style="color:' + (m.adopted > 0 ? "#63C68E" : "#4E5764") + '">' + WT().adopted(m.adopted, m.rounds) + "</span></div>" +
-      '<div class="bars">' + bars + "</div>" +
-      '<div class="foot"><span>' + k1(m.tokens) + " tok</span><span>" + esc(m.roles) + "</span></div>" +
-    "</div>";
-  }).join("");
-}
 function renderLeft(){
   return '<aside class="pane l" id="pane-l">' +
       '<div class="blk-rounds"><span class="seclab">' + WT().secRounds + '</span><div class="rlist">' +
@@ -808,8 +748,6 @@ function renderLeft(){
         '<div class="rank">' + renderRanking() + "</div>" +
         '<div class="legend"><span><i style="opacity:.38"></i>' + WT().legIn + "</span><span><i></i>" + WT().legOut + "</span></div>" +
       "</div>" +
-      '<div class="hr" style="margin:2px 0 0"></div>' +
-      '<div class="blk-models"><span class="seclab">' + WT().secModels + '</span><div class="mlist">' + renderModels() + "</div></div>" +
     "</aside>";
 }
 

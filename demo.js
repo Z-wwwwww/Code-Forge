@@ -10,7 +10,7 @@
  *     它的账也摊不出来(usage 层的 soloLabel 才叫协调者,那是另一条路)。
  *   老 demo 的 8 角色竞标裁决(提案者/裁判/实现者…)是本地驱动模式时代的剧本,已废。
  *
- * 这里只放「事实」,不放任何显示派生量 —— 角色的 token 总计、模型采纳、全会话总量
+ * 这里只放「事实」,不放任何显示派生量 —— 角色的 token 总计、全会话总量
  * 都由页面从事件流 reduce 出来。故这份示例与真实运行走的是同一条路径、同一批形状:
  * loop_say 的 event、gate 的 test 事件(meta.met)、round.end、run.streaming 心跳、
  * chatusage 的 usage 事件(增量 + ctx 快照)。
