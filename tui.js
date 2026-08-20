@@ -505,7 +505,9 @@ function renderLines(st, width, view) {
         const m = a.model ? shortModel(a.model) : null;
         if (m && models.indexOf(m) < 0) models.push(m);
       });
-      const model = models.length ? models.join("/") : r.model;
+      // 没量到账的角色用 role.add 里的模型,也过一遍 shortModel —— 同一列里
+      // 一行「sonnet-5」一行「claude-sonnet-5」会被当成两个东西
+      const model = models.length ? models.join("/") : shortModel(r.model);
       // 账的优先级:独立进程/档案自报(最准) > loop_say 带的 tok > 留空
       // (量不到就空着 —— 用户点名:「没发言的不需要显示 token 不可得,显示空就可以了」)
       /* ★ 首位那个数用 **Claude Code 同口径**:该角色各 agent **末次上下文**之和。
