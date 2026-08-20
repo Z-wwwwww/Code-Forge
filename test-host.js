@@ -1779,6 +1779,70 @@ async function testChatUsage() {
     .replace(/\x1b\[[0-9;]*m/g, "");
   assert.ok(fullScr.indexOf("agent 自己报的") < 0, "★ 用量区域从直播画面撤掉,数字只在角色行上");
 
+  /* ★ 心跳先观察后推测(实测被问:「这不是直播吗,怎么还有猜测」):
+   *   档案 mtime 新鲜 = 它正在写,这是事实;看不到才退回带「多半」的推测。 */
+  {
+    const root2 = path.join(os.tmpdir(), "cf-act-" + process.pid);
+    const sub2 = path.join(root2, "s1", "subagents");
+    fs.mkdirSync(sub2, { recursive: true });
+    const mkAgent = function (id, type, freshMs) {
+      fs.writeFileSync(path.join(sub2, id + ".meta.json"), JSON.stringify({ agentType: type, description: "x" }));
+      const f = path.join(sub2, id + ".jsonl");
+      fs.writeFileSync(f, "{}" + String.fromCharCode(10));
+      const t = new Date(Date.now() - freshMs);
+      fs.utimesSync(f, t, t);
+    };
+    mkAgent("agent-fresh", "forge-critic", 5000);       // 5s 前还在写 → 正在干活
+    mkAgent("agent-stale", "forge-proposer", 999000);   // 早停了 → 不算
+    mkAgent("agent-alien", "general-purpose", 1000);    // 别人的活 → 不算
+    const pAct = cu.createPuller({ root: root2,
+      roles: [{ id: "r1", name: "实现者", kind: "propose" }, { id: "r2", name: "反驳者", kind: "attack" }],
+      sinceMs: Date.now() - 3600000 });
+    const act = pAct.activity(150000);
+    assert.strictEqual(act.length, 1, "只有新鲜的本回环子 agent 算正在干活");
+    assert.strictEqual(act[0].role, "反驳者", "按 kind 认回角色名");
+    try { fs.rmSync(root2, { recursive: true, force: true }); } catch (_) {}
+    const hostSrcA = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
+    assert.ok(/puller\.activity/.test(hostSrcA) && /quietWorking/.test(hostSrcA),
+      "★ 心跳要先用档案观察(quietWorking,不带「多半」),观察不到才推测");
+    const i18nSrcA = fs.readFileSync(path.join(__dirname, "i18n.js"), "utf8");
+    assert.ok(/quietWorking/.test(i18nSrcA) && /正在干活/.test(i18nSrcA) && /is working/.test(i18nSrcA),
+      "观察版心跳双语都要有");
+    ok("★ 心跳先观察后推测：档案还在写=正在干活(事实)，看不到才带「多半」(推测标成推测)");
+  }
+
+  /* ★ 两个观察面功能一致(用户点名):分歧详情与补丁台账 TUI 也要看得到。 */
+  {
+    const tuiC2 = require("./tui.js");
+    const stC = tuiC2.newState();
+    [{ t: "run.start", session: "s", mode: "host", budget: { rounds: 3, seconds: 60 } },
+     { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
+     { t: "role.add", id: "r2", name: "反驳者", model: "opus" },
+     { t: "round.start", n: 1 },
+     { t: "event", round: 1, role: "r1", kind: "propose", ts: "10:00:01", summary: "改" },
+     { t: "conflict", round: 1, sev: "HIGH", topic: "409 还是 200",
+       a: "r2", aClaim: "409 会重投风暴", b: "r1", bClaim: "改 200 进队列", resolution: "反驳者复检中" },
+     { t: "patch", round: 1, file: "webhook/handlers.py", add: 14, del: 5, by: "r1",
+       note: "入口改 claim_event()", state: "被反证", st: "bad", tests: "tests 48/50" }
+    ].forEach(function (e) { tuiC2.reduce(stC, e); });
+    const flat = function (view) {
+      return tuiC2.renderLines(stC, 100, view).map(function (l) { return (l.text || "").replace(/\[[0-9;]*m/g, ""); });
+    };
+    const closed = flat({ open: 1, openEv: new Set() }).join(String.fromCharCode(10));
+    assert.ok(/\[HIGH\] 409 还是 200/.test(closed), "★ 分歧要有议题行(不再只是一个数)。实际:" + closed);
+    assert.ok(closed.indexOf("409 会重投风暴") < 0, "详情惰性:没点开不展示");
+    const opened = flat({ open: 1, openEv: new Set(["conf:1:0"]) }).join(String.fromCharCode(10));
+    assert.ok(/反驳者 │ 409 会重投风暴/.test(opened) && /实现者 │ 改 200 进队列/.test(opened),
+      "★ 点开分歧 → 两边原话(角色名解析自 id)。实际:" + opened);
+    assert.ok(/→ 反驳者复检中/.test(opened), "处置结果也要在");
+    assert.ok(/± webhook\/handlers\.py \+14 -5 · 实现者/.test(opened) && /被反证/.test(opened),
+      "★ 补丁台账(t:patch)TUI 也要渲染 —— 与网页代码演进同一份事实");
+    const htmlP = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+    assert.ok(/r\.usage \? " · " \+ k1\(r\.usage\)/.test(htmlP),
+      "★ 反向对齐:网页轮次列表也要带逐轮用量(TUI 早就有)");
+    ok("★ 观察面对齐：TUI 可看分歧详情(点开式)与补丁台账；网页轮次带逐轮用量");
+  }
+
   try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) {}
   ok("★ 聊天路径的账:按 id 去重、开局前的不算、别人的子 agent 不算、只发增量;角色行显示真模型与合计");
 

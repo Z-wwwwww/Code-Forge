@@ -35,6 +35,10 @@ const TABLES = {
           : " —— 角色多半还在干活(子 agent 一跑几分钟正常)");
     },
     quietNag: "；一直这样就回执行者那头看看它是不是停了/在等审批",
+    quietWorking: function (n, s, name, ago) {
+      return "第 " + n + " 轮 · 距上一条发言已 " + s + "s（" + name + "正在干活 —— 它的档案 " +
+        ago + "s 前还在更新）";
+    },
     // hostrun:判据事件
     metPrefix: "达标 · ",
     notMetPrefix: "未达标 · ",
@@ -124,6 +128,10 @@ const TABLES = {
           : " — roles are likely still working (subagents often run for minutes)");
     },
     quietNag: "; if this persists, check the executor side — it may have stopped or be awaiting approval",
+    quietWorking: function (n, s, name, ago) {
+      return "Round " + n + " · " + s + "s since the last statement (" + name + " is working — " +
+        "its archive was still being written " + ago + "s ago)";
+    },
     metPrefix: "Met · ",
     notMetPrefix: "Not met · ",
     notJudged: "Not judged: ",

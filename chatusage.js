@@ -155,6 +155,22 @@ function createPuller(opts) {
 
   return {
     root: root,
+    /* 正在干活的证据:本回环的子 agent 档案里,mtime 仍新鲜的那些。
+     * ★ 这是**观察**(文件真的在被写),不是「上一条是谁说的」那种推测 ——
+     *   心跳优先用它,措辞才有资格不带「多半」(实测被问:直播怎么还有猜测)。 */
+    activity: function (staleMs) {
+      const now = Date.now();
+      return listAgents(root).filter(function (a) {
+        if (a.mtime < sinceMs) return false;
+        const role = resolveRole(roles, a.meta);
+        const type = String((a.meta && a.meta.agentType) || "");
+        if (!role && type.indexOf("forge-") !== 0) return false;
+        return now - a.mtime <= (staleMs || 150000);
+      }).map(function (a) {
+        return { agent: a.id, role: resolveRole(roles, a.meta) || String((a.meta && a.meta.agentType) || ""),
+          agoMs: now - a.mtime };
+      }).sort(function (x, y) { return x.agoMs - y.agoMs; });
+    },
     pull: function (round) {
       const evs = [];
       listAgents(root).forEach(function (a) {

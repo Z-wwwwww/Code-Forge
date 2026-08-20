@@ -231,7 +231,13 @@ function reduce(st, ev) {
       }
       break;
     }
-    case "conflict": round(ev.round || 1).conflicts++; break;
+    case "conflict": {
+      const rc = round(ev.round || 1);
+      rc.conflicts++;
+      // 细节也留着 —— 只计数的话分歧在 TUI 里就只是一个数字(实测被问「TUI 看不了吗」)
+      (rc.confs = rc.confs || []).push(ev);
+      break;
+    }
     case "round.end": {
       const r = round(ev.n);
       r.live = false;
@@ -240,7 +246,7 @@ function reduce(st, ev) {
     }
     case "run.end": st.ended = ev; break;
     case "run.streaming": st.streaming = ev; break;
-    case "patch": break;
+    case "patch": (round(ev.round || 1).patches = round(ev.round || 1).patches || []).push(ev); break;
     // 用量原样收着,汇总在渲染时现算 —— 与网页、`code-forge usage` 共用 usage.reduceEvents,
     // 三个地方算出三个不一样的总数是最难查的那种 bug
     case "usage": st.usageEvents.push(ev); break;
@@ -719,7 +725,39 @@ function renderLines(st, width, view) {
       }
       if (r.conflicts) {
         L.push({ inRound: r.n, text: C.yellow(T.conflicts(r.conflicts)) });
+        /* ★ 分歧不只是一个数(实测被问「TUI 看不了吗」;并要求两个观察面功能一致)。
+         *   每处分歧一行议题,点开看两边原话与处置 —— 与聊天记录同一套开合(evKey/openEv)。 */
+        (r.confs || []).forEach(function (c, ci) {
+          const cKey = "conf:" + r.n + ":" + ci;
+          const cOpen = !!(view && view.openEv && view.openEv.has && view.openEv.has(cKey));
+          L.push({ inRound: r.n, evKey: cKey,
+            text: "     " + C.dim(cOpen ? "▾" : "▸") + " " +
+              C.yellow("[" + (c.sev || "?") + "] ") + clip(String(c.topic || ""), W - 20) });
+          if (cOpen) {
+            const nameOf = function (id) { return (st.roles[id] && st.roles[id].name) || id || "?"; };
+            [[c.a, c.aClaim], [c.b, c.bClaim]].forEach(function (side) {
+              if (!side[1]) return;
+              wrapText(String(side[1]), W - 24).slice(0, 3).forEach(function (l, li) {
+                L.push({ inRound: r.n, text: "         " +
+                  (li === 0 ? C.bold(nameOf(side[0])) + C.dim(" │ ") : "       ") + C.dim(l) });
+              });
+            });
+            if (c.resolution) {
+              L.push({ inRound: r.n, text: "         " + C.dim("→ " + clip(String(c.resolution), W - 16)) });
+            }
+          }
+        });
       }
+      // 补丁台账(t:"patch"):网页右栏「代码演进」的同一份事实,轮内一行一条
+      (r.patches || []).forEach(function (pch) {
+        const byName = (st.roles[pch.by] && st.roles[pch.by].name) || pch.by || "";
+        L.push({ inRound: r.n, text: "     " + C.dim("± " + pch.file +
+          (pch.add != null ? " +" + pch.add : "") + (pch.del != null ? " -" + pch.del : "") +
+          (byName ? " · " + byName : "") + (pch.note ? " · " + clip(pch.note, 40) : "")) +
+          (pch.state ? "  " + (pch.st === "ok" ? C.green(pch.state)
+            : pch.st === "bad" ? C.red(pch.state) : C.yellow(pch.state)) : "") +
+          (pch.tests && pch.tests !== pch.state ? C.dim("  " + pch.tests) : "") });
+      });
       // ★ 进行中的轮在聊天记录末尾挂一条**实时活动行**(带脉搏) ——
       //   展开的轮里要能看到「此刻哪个角色在干什么」,不用低头去找底栏
       if (r.live && !st.ended && st.streaming && st.streaming.text) {

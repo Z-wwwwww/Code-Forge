@@ -551,7 +551,8 @@ function totals(){
   return roleList().reduce(function(a,r){ a.in += r.inTok; a.out += r.outTok; return a; }, { in:0, out:0 });
 }
 function roundMeta(rd){
-  var counted = WT().evConf(rd.events.length, rd.conflicts.length);
+  var counted = WT().evConf(rd.events.length, rd.conflicts.length) +
+    (rd.usage ? " · " + k1(rd.usage) + " tok" : "");
   // 结轮之后 meta 是终稿,照发;进行中的轮子数还在变,声明的那份必然过期,只留它的时间段
   if (!rd.live) return rd.meta || counted;
   return rd.meta ? rd.meta + " · " + counted : counted;
@@ -688,8 +689,9 @@ function renderRoundList(){
   var cur = curRound();
   return STORE.rounds.map(function(r){
     var on = cur && r.n === cur.n;
-    var meta = r.live ? WT().liveEv(r.events.length)
-                      : WT().evConf(r.events.length, r.conflicts.length);
+    var meta = (r.live ? WT().liveEv(r.events.length)
+                      : WT().evConf(r.events.length, r.conflicts.length)) +
+      (r.usage ? " · " + k1(r.usage) + " tok" : "");
     return '<button class="ritem' + (on ? " on" : "") + '" data-act="round" data-v="' + esc(r.n) + '">' +
       '<span class="n">R' + esc(r.n) + "</span>" +
       '<span class="mid"><span class="ti">' + esc(r.title) + '</span><span class="me">' + esc(meta) + "</span></span>" +

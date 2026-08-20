@@ -101,12 +101,21 @@ function create(append) {
       if (warned > 6) return;   // 同一段静默别刷屏;下一条发言会重置
       const sec = Math.round((Date.now() - baseline) / 1000);
       const tq = i18n.T(st.lang);
-      /* ★ actor:大概在干活的角色。实测:直播上的脉搏行以「第 N 轮 ·」开头,
-       *   显示层只能靠「3 分钟内说过话」猜角色 —— 子 agent 一跑十几分钟,窗口一过
-       *   角色名被摘掉,脉搏看起来挂在轮次上。谁在动**服务端知道**(上一条是反驳者
-       *   → 在等实现者修;否则就是上一个发言者代表的那摊活),事件自己带上。 */
-      let actor = null;
-      if (st.lastSay) {
+      /* ★ 先观察,后推测(实测被问:「这不是直播吗,怎么还有猜测」)。
+       *   观察:子 agent 档案的 mtime 还新鲜 = 它**正在**写 —— 这是事实,措辞不带「多半」。
+       *   推测:档案看不到(别的宿主/还没落盘)才按「上一条是谁说的」推,措辞必须带「多半」
+       *   —— 把猜测标成猜测是本项目的底线,把猜测说成事实才是问题。 */
+      let actor = null, observed = null;
+      try {
+        const act = puller && puller.activity ? puller.activity(Math.max(ms * 2, 150000)) : [];
+        if (act.length) {
+          const byName = st.cfg.roles.filter(function (r) { return r.name === act[0].role; })[0];
+          if (byName) observed = { id: byName.id, name: byName.name, ago: Math.round(act[0].agoMs / 1000) };
+        }
+      } catch (_) { /* 观察失败就退回推测 —— 心跳绝不许把回环搞挂 */ }
+      if (observed) {
+        actor = observed.id;
+      } else if (st.lastSay) {
         actor = st.lastSay.kind === "attack"
           ? (st.cfg.roles.filter(function (r) { return r.kind === "propose"; })[0] || {}).id || null
           : st.lastSay.id;
@@ -114,7 +123,9 @@ function create(append) {
       append({ t: "run.streaming", role: "gate", actor: actor,
         text: (st.turns === 0
           ? tq.quietStart(sec)
-          : tq.quietRound(st.round, sec, st.lastSay)) +
+          : observed
+            ? tq.quietWorking(st.round, sec, observed.name, observed.ago)
+            : tq.quietRound(st.round, sec, st.lastSay)) +
           (warned >= 3 ? tq.quietNag : "") });
     }, ms);
     quietTimer.unref && quietTimer.unref();
