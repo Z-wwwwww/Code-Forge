@@ -383,7 +383,7 @@ async function testPortRetry() {
     try { child.kill(); } catch (_) {}
     held.forEach(function (s) { try { s.close(); } catch (_) {} });
     try { fs.unlinkSync(logFile); } catch (_) {}
-    try { fs.rmSync(privTmp, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(privTmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
   }
 }
 

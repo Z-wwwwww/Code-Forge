@@ -1801,7 +1801,7 @@ async function testChatUsage() {
     const act = pAct.activity(150000);
     assert.strictEqual(act.length, 1, "只有新鲜的本回环子 agent 算正在干活");
     assert.strictEqual(act[0].role, "反驳者", "按 kind 认回角色名");
-    try { fs.rmSync(root2, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(root2, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
     const hostSrcA = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
     assert.ok(/puller\.activity/.test(hostSrcA) && /quietWorking/.test(hostSrcA),
       "★ 心跳要先用档案观察(quietWorking,不带「多半」),观察不到才推测");
@@ -1881,7 +1881,7 @@ async function testChatUsage() {
     const fc = feedCap.pull(3);
     assert.ok(fc.length === 3 && fc[0].kind === "skip" && fc[0].n >= 1,
       "★ 一拍里动作太多时留最新的几条,并明写「中间 N 条没跟上」(截断必须说出来)");
-    try { fs.rmSync(root3, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(root3, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
   }
 
   /* ★ ⑤ 不入档:工具流走**易失**通道(emit),一条都不许进 run.jsonl。
@@ -1914,7 +1914,7 @@ async function testChatUsage() {
     await new Promise(function (r) { setTimeout(r, 400); });
     hf.end("abandoned", "测完");
     if (oldCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oldCfg;
-    try { fs.rmSync(cfgDir, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(cfgDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
 
     const fed = live.filter(function (e) { return e.t === "feed"; });
     assert.ok(fed.length >= 1, "★ 工具流要真的推出来(易失通道) —— 实到 " + live.length + " 条易失事件");
@@ -2008,7 +2008,11 @@ async function testChatUsage() {
     ok("★ 观察面对齐：TUI 可看分歧详情(点开式)与补丁台账；网页轮次带逐轮用量");
   }
 
-  try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) {}
+  /* ⚠ Windows 上 rmSync 会撞 EBUSY/EPERM(刚读过的文件句柄还没释放,杀毒软件也插一手)——
+   *   force 只吞 ENOENT,不管这些,于是 catch 一声不响地放过,tmp 里就攒下一堆
+   *   cf-chatusage-<pid> / cf-feedcfg-<pid>(实测:一次跑剩一份,3 天攒了 31 份)。
+   *   maxRetries/retryDelay 正是给这几个错误码准备的,重试几次就干净了。 */
+  try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (_) {}
   ok("★ 聊天路径的账:按 id 去重、开局前的不算、别人的子 agent 不算、只发增量;角色行显示真模型与合计");
 
   /* ★ 轮内账按 **key(agent id)** 对,不按角色名。实测:三个反驳者并发,
