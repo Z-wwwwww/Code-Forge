@@ -1828,9 +1828,17 @@ async function testChatUsage() {
   assert.ok(demoEvs.some(function (e) {
     return e.t === "usage" && e.ctx != null && e.cacheRead > 0 && e.agent && e.model;
   }), "★ 示例档案要带新用量形状(ctx 快照+缓存增量+agent id+模型) —— 预览才看得到账目区");
-  const demoCritics = demoEvs.filter(function (e) { return e.t === "usage" && e.role === "批判者"; });
+  const demoCritics = demoEvs.filter(function (e) { return e.t === "usage" && e.role === "反驳者"; });
   assert.ok(new Set(demoCritics.map(function (e) { return e.agent; })).size >= 2,
     "★ 示例里同名角色要有两个 agent —— 排行合并、轮内账分开这两条预览里才看得见");
+  /* ★ 示例阵容必须是产品**现在**的样子(实测被问「demo 里怎么还有协调者」):
+   *   提议者/反驳者/复核者 + 判据,没有协调者(它是宿主本身,不进角色表)。 */
+  const demoRoles = demoEvs.filter(function (e) { return e.t === "role.add"; })
+    .map(function (e) { return e.name; });
+  assert.deepStrictEqual(demoRoles, ["提议者", "反驳者", "复核者", "判据"],
+    "★ 示例角色 = 现役阵容(3 角色+判据),不许再出现协调者/裁判那套老剧本");
+  assert.ok(demoEvs.some(function (e) { return e.role === "gate" && e.meta && e.meta.met === false; }),
+    "★ 示例要有判据事件(meta.met) —— 判据走势区不覆盖,改它还得跑真回环");
   // ★ 网页的 k1 要有 M 档(tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
   //   实测「13980.0k」被当成数字算错了报 bug,其实只是格式化只认 k
   assert.ok(/function k1\(n\)\{[^\n]*1e6[^\n]*M/.test(html),
