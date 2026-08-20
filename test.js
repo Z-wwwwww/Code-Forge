@@ -230,7 +230,8 @@ function testHttp() {
   const logFile = path.join(os.tmpdir(), "cf-test-" + process.pid + ".jsonl");
   const port = 4771;
   const child = spawn(process.execPath,
-    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(port)],
+    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile,
+      "--port", String(port), "--no-port-file"],
     { stdio: ["ignore", "pipe", "pipe"] });
   const base = "http://localhost:" + port;
 
@@ -354,9 +355,15 @@ async function testPortRetry() {
   const expect = busy + 3;
   await new Promise(function (r) { held.pop().close(r); });   // 放掉第 4 个
 
+  /* 这个测试验证的就是端口文件,不能 --no-port-file 关掉 —— 但也不许写进**全局**
+   * 端口发现文件(测试台抢了它,别处弹的直播窗就找错台子,实测)。
+   * 隔离法:给子进程一个私有 tmpdir(os.tmpdir() 认 TMPDIR/TEMP/TMP),写读都在里面。 */
+  const privTmp = fs.mkdtempSync(path.join(os.tmpdir(), "cf-priv-"));
   const child = spawn(process.execPath,
-    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(busy)],
-    { stdio: ["ignore", "pipe", "pipe"] });
+    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile,
+      "--port", String(busy)],
+    { stdio: ["ignore", "pipe", "pipe"],
+      env: Object.assign({}, process.env, { TMPDIR: privTmp, TEMP: privTmp, TMP: privTmp }) });
   let out = "";
   child.stdout.on("data", function (b) { out += b.toString(); });
   const BANNER = "对抗编程监控台\\s+http://localhost:(\\d+)";
@@ -369,13 +376,14 @@ async function testPortRetry() {
       "★ 端口重试后启动横幅只许打一次,实际 " + hits.length + " 条:\n" + out);
     const shown = Number(new RegExp(BANNER).exec(out)[1]);
     assert.strictEqual(shown, expect, "横幅上的端口该是真正绑上的那个(" + expect + ")");
-    const info = JSON.parse(fs.readFileSync(path.join(os.tmpdir(), "code-forge-port.json"), "utf8"));
+    const info = JSON.parse(fs.readFileSync(path.join(privTmp, "code-forge-port.json"), "utf8"));
     assert.strictEqual(info.port, shown, "★ 端口文件与横幅必须是同一个端口");
     ok("★ 端口被占用 → 只报一次启动,横幅端口 == 端口文件端口(不再重复触发 ready)");
   } finally {
     try { child.kill(); } catch (_) {}
     held.forEach(function (s) { try { s.close(); } catch (_) {} });
     try { fs.unlinkSync(logFile); } catch (_) {}
+    try { fs.rmSync(privTmp, { recursive: true, force: true }); } catch (_) {}
   }
 }
 

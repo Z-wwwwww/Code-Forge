@@ -41,7 +41,11 @@ function slugFor(cwd) {
 }
 
 function rootFor(home, cwd) {
-  return path.join(home || os.homedir(), ".claude", "projects", slugFor(cwd || process.cwd()));
+  // ⚠ 没传 home 时得认 CLAUDE_CONFIG_DIR —— 跟 install.js:27 同一条规矩,
+  // 否则设了这个变量的用户,子 agent 档案根本不在 ~/.claude 下,逐角色用量恒空。
+  const claudeDir = home ? path.join(home, ".claude")
+    : (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"));
+  return path.join(claudeDir, "projects", slugFor(cwd || process.cwd()));
 }
 
 /** 子 agent 类型 → 这个回环里的角色 kind。用户改过模型/名字都不影响这条对应关系。 */
@@ -75,8 +79,9 @@ const ZERO = function () {
 function readTotals(file, sinceMs) {
   const acc = ZERO();
   let model = null;
+  let ctx = null;   // 末次调用的上下文规模(in+缓存读+缓存写)—— Claude Code 给 agent 显示的口径
   let text;
-  try { text = fs.readFileSync(file, "utf8"); } catch (_) { return { acc: acc, model: null }; }
+  try { text = fs.readFileSync(file, "utf8"); } catch (_) { return { acc: acc, model: null, ctx: null }; }
   const seenMsg = new Set();     // 坑①:分片重复,按 message.id 去重
   const seenBlock = new Set();
   text.split("\n").forEach(function (line) {
@@ -96,7 +101,12 @@ function readTotals(file, sinceMs) {
       acc.tools[c.name] = (acc.tools[c.name] || 0) + 1;
     });
     const u = m.usage;
-    if (!u || !m.id || seenMsg.has(m.id)) return;
+    if (!u) return;
+    /* ★ 上下文规模取**最后一条**消息的(快照,不累加)。实测教训:把历次调用的缓存读
+     *   加起来当「用量」,一个 agent 十几次调用直接加到几百万 —— 用户对照 Claude Code
+     *   屏上的 100~300k(它显示的就是当前上下文)以为账炸了(「预计只有 1000k 上下」)。 */
+    ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    if (!m.id || seenMsg.has(m.id)) return;
     seenMsg.add(m.id);
     acc.msgs++;
     acc.in += u.input_tokens || 0;
@@ -104,7 +114,7 @@ function readTotals(file, sinceMs) {
     acc.cacheRead += u.cache_read_input_tokens || 0;
     acc.cacheWrite += u.cache_creation_input_tokens || 0;
   });
-  return { acc: acc, model: model };
+  return { acc: acc, model: model, ctx: ctx };
 }
 
 /** 列出这个项目下所有子 agent 档案(跨会话 —— 用户中途重开会话也接得上) */
@@ -177,6 +187,7 @@ function createPuller(opts) {
           model: cur.model || null,          // ★ 它自己写下来的真模型,不是配置里那个占位
           round: round || 1,
           in: d.in, out: d.out, cacheRead: d.cacheRead, cacheWrite: d.cacheWrite,
+          ctx: cur.ctx,                      // 快照(末次上下文),下游取最新值,**不许累加**
           msgs: d.msgs, tools: d.tools,
           source: "claude 子 agent 档案"
         });

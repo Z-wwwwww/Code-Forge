@@ -70,7 +70,7 @@ function judgePrompt(o) {
  * 解裁定。**严格**:解不出 MET/NOT_MET 就是判据坏了(judge_broken),不是「未达标」——
  * 与 gate.js 里「命令找不到 ≠ 测试没过」同一条纪律。
  */
-function parseVerdict(text) {
+function parseVerdict(text, context) {
   const s = String(text || "");
   const m = /VERDICT:\s*(MET|NOT_MET)/i.exec(s);
   if (!m) {
@@ -79,7 +79,16 @@ function parseVerdict(text) {
   const met = /^MET$/i.test(m[1]);
   // 证据 = 出现了 `文件:行号` 这种引用。**无证据的 MET 不算达标** ——
   // 否则「看起来不错」就能签合格证,评审判据的意义就没了。
-  const evidence = (s.match(/[\w./\\-]+\.\w+:\d+/g) || []).slice(0, 20);
+  // ⚠ 已知局限:这里扫的是评审者整段输出,若它在作答时复述了 rubric/目标原文
+  // (这些文本本身恰好含 `文件:行号` 样式的例子),会被误当成它自己找到的证据。
+  // 保守处理:先把 rubric/目标的原文从待扫描文本里剔掉,降低这种复述被计入的概率。
+  let scanned = s;
+  if (context) {
+    [context.rubric, context.task].forEach(function (t) {
+      if (t && String(t).trim()) scanned = scanned.split(String(t)).join(" ");
+    });
+  }
+  const evidence = (scanned.match(/[\w./\\-]+\.\w+:\d+/g) || []).slice(0, 20);
   const next = (/NEXT:\s*(.+)/i.exec(s) || [])[1] || "";
   if (met && !evidence.length) {
     return {
@@ -172,7 +181,7 @@ async function check(o) {
     const r = tracker.ingestRaw(ad, m, o.round || 1);
     if (r && r.log) {
       logs.push(r.log);
-      if (opts.onActivity) { try { opts.onActivity(r.log); } catch (_) {} }
+      if (o.onActivity) { try { o.onActivity(r.log); } catch (_) {} }
     }
     const parsed = ad.parse(m);
     if (parsed && parsed.text) text = parsed.text;   // 最后那条最终答复才是裁定
@@ -221,7 +230,7 @@ async function check(o) {
     return Object.assign(base, { met: false, broken: true,
       detail: "评审者没有给出结论（退出码 " + done.code + "）" });
   }
-  return Object.assign(base, parseVerdict(text));
+  return Object.assign(base, parseVerdict(text, { rubric: o.rubric, task: o.task }));
 }
 
 module.exports = { check: check, parseVerdict: parseVerdict, judgePrompt: judgePrompt,

@@ -53,6 +53,7 @@ if (flag("help") || flag("h")) {
   --file <path>     事件日志路径(默认 ./run.jsonl)
   --port <n>        端口(默认 4610,被占用则自动 +1)
   --no-open         不自动打开浏览器
+  --no-port-file    不登记进全局端口发现文件(一次性/测试实例用,别让别人找到你)
   --stay            常驻(默认没人看且没回环在跑 30s 就自灭,不留僵尸)
   --mcp             以 MCP server(stdio)运行,供各家 coding agent 接入
   --url <base>      配合 --mcp:监控台地址(默认按端口文件/环境变量发现)
@@ -150,9 +151,13 @@ function load() {
   try { raw = fs.readFileSync(LOG_FILE, "utf8"); } catch (_) { return; }
   raw.split("\n").forEach((line) => {
     if (!line.trim()) return;
-    try { log.push(JSON.parse(line)); }
+    let e;
+    try { e = JSON.parse(line); }
     // 坏行只跳过这一行、吼一声 —— 不因为一行畸形就丢掉整段历史
-    catch (_) { console.warn("[log] 跳过一行无法解析的记录"); }
+    catch (_) { console.warn("[log] 跳过一行无法解析的记录"); return; }
+    // 合法 JSON 但不是对象(比如整行就是字面量 null)同样跳过 —— 参照 append() 的过滤,
+    // 否则 reconcileLog/usage 解引用 e.t 时直接崩
+    if (e && typeof e === "object") log.push(e);
   });
 }
 
@@ -213,7 +218,7 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === "/events" && req.method === "GET") {
     // 断线重连由浏览器带 Last-Event-ID 回来;没有就看 ?since=
-    const since = parseInt(req.headers["last-event-id"] || url.searchParams.get("since") || "0", 10) || 0;
+    const since = Math.max(0, parseInt(req.headers["last-event-id"] || url.searchParams.get("since") || "0", 10) || 0);
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -231,6 +236,16 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === "/events" && req.method === "POST") {
+    // 跨站防护:浏览器发起的跨站请求会带 Origin,且和这个服务自己的地址对不上 ——
+    // 直接挡在门外。不这样做的话,随便一个网页开着就能靠 <script>fetch(...) 或者
+    // 表单(POST + text/plain 属于 CORS 的 simple request,不预检)往本地这条日志里
+    // 写事件。非浏览器调用(curl/脚本)不带 Origin,不受影响,--help 里教的那条 curl 照样能用。
+    const origin = req.headers.origin;
+    if (origin && origin !== "http://" + req.headers.host && origin !== "https://" + req.headers.host) {
+      res.writeHead(403, { "content-type": "application/json" })
+        .end(JSON.stringify({ error: "跨站请求拒绝(Origin 与本机地址不符)" }));
+      return;
+    }
     // 收 Buffer 再一次性按 UTF-8 解 —— 拼字符串会在多字节字符正好跨 chunk 时把它切坏
     const chunks = [];
     let size = 0;
@@ -244,6 +259,18 @@ const server = http.createServer((req, res) => {
       try { parsed = JSON.parse(body); }
       catch (e) { res.writeHead(400, { "content-type": "application/json" })
         .end(JSON.stringify({ error: "JSON 解析失败: " + e.message })); return; }
+      // 「达标停止」这几个 reason 只该由本进程内部的驱动(hostrun.js/loop.js,直接调用
+      // append(),从不走这条 HTTP 口子)在判据真的过了之后写下。从 /events 这条外部
+      // 入口收到的 run.end 一旦带这几个 reason,当假货整批拒绝 —— 不然本地脚本或者
+      // 上面那条跨站请求只要绕过 Origin 检查(比如同源脚本)就能给自己发合格证。
+      const GOAL_REASONS = ["goal_met", "judged_met", "reported_met"];
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      const faked = list.some((e) => e && e.t === "run.end" && GOAL_REASONS.indexOf(e.reason) >= 0);
+      if (faked) {
+        res.writeHead(403, { "content-type": "application/json" })
+          .end(JSON.stringify({ error: "达标类终止事件(run.end + goal_met/judged_met/reported_met)只能由内部驱动写入,HTTP 入口拒绝" }));
+        return;
+      }
       const n = append(parsed);
       res.writeHead(200, { "content-type": "application/json" })
         .end(JSON.stringify({ appended: n, total: log.length }));
@@ -273,8 +300,12 @@ const server = http.createServer((req, res) => {
     });
   }
   if (url.pathname === "/host/gate" && req.method === "POST") {
-    return host.gate().then((r) => json(res, r.error ? 409 : 200, r))
-      .catch((e) => json(res, 500, { error: String(e.message) }));
+    // opts(observed/said…)在 body 里,不读出来就恒为 undefined —— idle_spin 闸变死代码、
+    // 评审者报的 said 也传不到 hostrun 那边
+    return readJson(req, res, (opts) => {
+      host.gate(opts || {}).then((r) => json(res, r.error ? 409 : 200, r))
+        .catch((e) => json(res, 500, { error: String(e.message) }));
+    });
   }
   if (url.pathname === "/host/end" && req.method === "POST") {
     return readJson(req, res, (b) => {
@@ -316,6 +347,9 @@ const server = http.createServer((req, res) => {
     return readJson(req, res, (cfg) => {
       if (run.active) {
         return json(res, 409, { error: "已有回环在进行中,先停止它" });
+      }
+      if (host.isActive()) {
+        return json(res, 409, { error: "宿主驱动的回环正在跑,先停止它" });
       }
       if (!Array.isArray(cfg.roles) || !cfg.roles.length) {
         return json(res, 400, { error: "至少要有一个角色" });
@@ -476,7 +510,12 @@ function armIdleExit() {
 function ready(port) {
   const url = "http://localhost:" + port;
   SELF_URL = url;
-  writePortFile(port);
+  /* ★ --no-port-file:别把自己登记进全局端口发现文件。实测事故:npm test 起的
+   *   一次性测试台(4791)把端口文件抢了过去 —— 恰逢用户在聊天里配置新回环,
+   *   e2e 测试弹出的直播窗按被抢的文件找台子,测试台一死又拉起正式台回放旧档案,
+   *   用户看到的就是「刚给完目标,TUI 弹出来还满是上一局的数据」。
+   *   一次性/测试实例一律带这个 flag,不参与全局发现。 */
+  if (!flag("no-port-file")) writePortFile(port);
   console.log("对抗编程监控台  " + url);
   console.log("事件日志        " + LOG_FILE + "  (" + log.length + " 条)");
   console.log("喂事件          POST " + url + "/events");

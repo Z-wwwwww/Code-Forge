@@ -41,7 +41,24 @@ function runCommand(command, cwd, timeoutMs) {
     child.stdout.on("data", grab);
     child.stderr.on("data", grab);
     const out = function () { return decodeOutput(Buffer.concat(chunks)); };
-    const timer = setTimeout(function () { killed = true; child.kill(); }, timeoutMs || 600000);
+    // win32 下 child.kill() 只杀得掉 shell 起的 cmd.exe 本身,杀不掉它派生的孙进程
+    // (比如 npm 起的 node)。孙进程还攥着 stdout/stderr 管道的写端时,"close" 事件
+    // 永远等不到,这个 Promise 就挂死。用 taskkill /T 连子孙一起杀。
+    const timer = setTimeout(function () {
+      killed = true;
+      if (process.platform === "win32" && child.pid) {
+        try {
+          // taskkill 若 ENOENT(极端环境没这个命令)会异步发 "error" 事件 —— 不接住的话
+          // 会变成 uncaughtException,把常驻的 server 进程一起拖垮。这里只是兜底杀,
+          // 接住就好,不必再报什么。
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"]).on("error", function () {
+            try { child.kill(); } catch (_) {}
+          });
+        } catch (_) { try { child.kill(); } catch (_) {} }
+      } else {
+        child.kill();
+      }
+    }, timeoutMs || 600000);
     child.on("error", function (err) {
       clearTimeout(timer);
       resolve({ code: -1, out: String(err.message), ms: Date.now() - started, spawnFailed: true });
@@ -75,9 +92,11 @@ async function check(goal) {
   // POSIX 127 / cmd.exe 9009。不认这两个数,「判据打错字」就会被当成「测试没过」,
   // 于是回环会一轮轮去修一个根本没跑起来的判据。
   // 中文 Windows 的 cmd 用中文报「不是内部或外部命令」且退出码只是 1,所以两种线索都得认
-  if (r.code === 127 || r.code === 9009 ||
+  // ⚠ 这些哨兵只能在退出码非 0 时才生效 —— 否则 exit 0(全通过)或正常失败但输出里
+  // 恰好含这类字样(比如测试用例名字/日志文本)的情况会被误判成「判据坏了」
+  if (r.code !== 0 && (r.code === 127 || r.code === 9009 ||
       /not recognized as an internal|command not found|No such file or directory/i.test(r.out) ||
-      /不是内部或外部命令|无法将|不是可运行的程序/.test(r.out)) {
+      /不是内部或外部命令|无法将|不是可运行的程序/.test(r.out))) {
     return Object.assign(out, { met: false, broken: true,
       detail: "判据命令找不到（exit " + r.code + "）：" + (r.out.split("\n")[0] || "").slice(0, 160) });
   }

@@ -204,6 +204,8 @@ function createTracker(opts) {
       b.out += u.out || 0;
       b.cacheRead += u.cacheRead || 0;
       b.cacheWrite += u.cacheWrite || 0;
+      // 上下文快照(末次调用的 in+缓存读写),给显示层用 Claude Code 的口径 —— 不累加
+      a.ctx = (u.in || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
       b.msgs += 1;
       changed = true;
     }
@@ -245,6 +247,7 @@ function createTracker(opts) {
         role: a.label, agent: a.key, agentType: a.agentType,
         model: a.model || null,
         in: b.in, out: b.out, cacheRead: b.cacheRead, cacheWrite: b.cacheWrite,
+        ctx: a.ctx != null ? a.ctx : undefined,   // 快照,下游取最新,不累加
         msgs: b.msgs, tools: b.tools,
         source: source || "宿主自报"
       });
@@ -338,12 +341,17 @@ function reduceEvents(events) {
     const a = byAgent.get(key);
     if (ev.model && !a.model) a.model = ev.model;
     a.rounds.add(ev.round || 1);
+    // ctx 是**快照**(该 agent 末次调用的上下文规模),取最新值 —— 累加它就是把
+    // 同一段上下文数 N 遍(实测被用户当成账炸了:「预计只有 1000k 上下」)
+    if (ev.ctx != null) a.ctx = ev.ctx;
     addInto(a.acc, ev);
 
     const rk = ev.round || 1;
     if (!byRound.has(rk)) byRound.set(rk, new Map());
     const rm = byRound.get(rk);
-    if (!rm.has(key)) rm.set(key, { role: ev.role || key, acc: EMPTY() });
+    // key 要一路带出去:同一角色并发派了三份(三个反驳者)时,轮内账只有按 key
+    // 才对得上是哪一份 —— 按角色名对,三行全命中第一份(实测:表里三行同一个数)
+    if (!rm.has(key)) rm.set(key, { key: key, role: ev.role || key, acc: EMPTY() });
     addInto(rm.get(key).acc, ev);
   });
 
@@ -352,6 +360,7 @@ function reduceEvents(events) {
       key: a.key, role: a.role, agentType: a.agentType, model: a.model,
       rounds: Array.from(a.rounds).sort(function (x, y) { return x - y; }),
       in: a.acc.in, out: a.acc.out, cacheRead: a.acc.cacheRead, cacheWrite: a.acc.cacheWrite,
+      ctx: a.ctx != null ? a.ctx : null,
       msgs: a.acc.msgs, tools: a.acc.tools
     };
   }).sort(function (x, y) { return (y.in + y.out) - (x.in + x.out); });
@@ -361,13 +370,18 @@ function reduceEvents(events) {
     acc.msgs += a.msgs;
     return acc;
   }, { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, msgs: 0 });
+  // 上下文合计 = 各 agent 末次上下文之和(每只各报一次,不重复) —— Claude Code 屏上
+  // 那些「N tokens」加起来就是它。没有任何 agent 报过 ctx 就是 null,不硬凑
+  const ctxKnown = agents.filter(function (a) { return a.ctx != null; });
+  grand.ctx = ctxKnown.length
+    ? ctxKnown.reduce(function (s, a) { return s + a.ctx; }, 0) : null;
 
   const rounds = Array.from(byRound.keys()).sort(function (x, y) { return x - y; }).map(function (n) {
     return {
       n: n,
       agents: Array.from(byRound.get(n).values()).map(function (v) {
         return {
-          role: v.role, in: v.acc.in, out: v.acc.out,
+          key: v.key, role: v.role, in: v.acc.in, out: v.acc.out,
           cacheRead: v.acc.cacheRead, cacheWrite: v.acc.cacheWrite,
           msgs: v.acc.msgs, tools: v.acc.tools
         };

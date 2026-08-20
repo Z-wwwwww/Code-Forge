@@ -200,7 +200,10 @@ function runRole(opts) {
     const perm = adapters.permissionFor(ad, opts.role.permissionMode);
     let args;
     try {
-      args = ad.buildArgs({ model: model, cwd: opts.cwd, permission: perm, readOnly: readOnly });
+      // promptVia:"arg" 的适配器(opencode/cursor-agent)提示词不走 stdin,
+      // 得靠 buildArgs 把 opts.prompt 拼进 argv —— 不传的话它们收不到任务书
+      args = ad.buildArgs({ model: model, cwd: opts.cwd, permission: perm, readOnly: readOnly,
+        prompt: ad.promptVia === "arg" ? opts.prompt : undefined });
     } catch (e) { return resolve({ error: "拼参数失败：" + e.message }); }
 
     const env = Object.assign({}, process.env);
@@ -273,8 +276,9 @@ function runRole(opts) {
       else { child.stdin.write(opts.prompt); child.stdin.end(); }
     } catch (e) { return resolve({ error: "提示词写不进 stdin：" + e.message }); }
 
+    child.stdout.setEncoding("utf8"); // 不设的话最终答复里的中文跨块会被切成 U+FFFD
     child.stdout.on("data", function (b) {
-      buf += b.toString();
+      buf += b;
       let nl;
       while ((nl = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, nl).trim();

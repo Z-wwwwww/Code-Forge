@@ -105,8 +105,11 @@ async function ensureConsole(base) {
 
 /* ---------------- 事件 → 状态（与网页同一套 reduce 语义） ---------------- */
 function newState() {
+  /* ⚠ 每个会在 reduce 里赋值的字段都必须列在这儿:run.start 换茬走的是
+   *   Object.keys(newState()) 逐键复位 —— 漏一个键,旧局的值就活进新局。
+   *   实测:streaming 没列,新局 R1 挂着上一局的「第 2 轮 · 距上一条发言已 593s」。 */
   return { run: null, roles: {}, roleOrder: [], rounds: [], byN: {}, ended: null, count: 0, unknown: 0,
-    usageEvents: [] };
+    usageEvents: [], streaming: null };
 }
 function reduce(st, ev) {
   st.count++;
@@ -305,6 +308,10 @@ function kfmt(n) {
   n = n || 0;
   if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
   if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  // ★ 两位数以上也带单位。「396↑」和「14.5k↓」混排时没人知道 396 是 396 还是 396k
+  //   (实测被点名「有的有单位有的没单位」)。个位数与 0 保持裸数 —— 0.00k 更糊弄人。
+  if (n >= 100) return (n / 1000).toFixed(1) + "k";
+  if (n >= 10) return (n / 1000).toFixed(2) + "k";
   return String(n);
 }
 /** claude-opus-4-5-20251101 → opus-4-5。整串写进表格会把别的列全挤没。 */
@@ -329,17 +336,24 @@ function renderUsage(u, curN, W) {
   if (!u || !u.measured) return [];
   const L = [];
   const cur = (u.rounds || []).filter(function (r) { return r.n === curN; })[0] || null;
-  const roundOf = function (role) {
+  // ★ 按 key(agent id)对轮内账,不按角色名 —— 三个反驳者并发时按名字对,
+  //   三行全命中第一份的数(实测:本轮列三行都是 46/14.5k,工具列也一样)
+  const roundOf = function (key) {
     if (!cur) return null;
-    return cur.agents.filter(function (a) { return a.role === role; })[0] || null;
+    return cur.agents.filter(function (a) { return a.key === key; })[0] || null;
   };
 
   // 合计 = **摊出来的那份**。不用 result 里的数冒充总数 —— 实测它和逐条求和对不上,
   // 而且 iterations 只有一条,它压根不是全程的(详见 usage.js 顶部)。
   const g = u.grand;
   const parts = [
+    /* ★ 口径要跟用户屏上那把尺一致:头号数字 = 各 agent **末次上下文**之和(Claude Code
+     *   给 agent 显示的就是它)。缓存**累计**是另一把尺(计费口径:每次调用把整个上下文
+     *   重读一遍,十几次调用轻松累到千万级) —— 必须带解释地降级摆,不然会被当成账炸了。 */
+    g.ctx != null ? "上下文 " + kfmt(g.ctx) + "（各 agent 末次之和,Claude Code 同口径）" : null,
     kfmt(g.in) + "↑ / " + kfmt(g.out) + "↓",
-    g.cacheRead ? "缓存读 " + kfmt(g.cacheRead) : null,
+    g.cacheRead ? "缓存重读累计 " + kfmt(g.cacheRead) + "（计费口径:每次调用重读全上下文,非占用量）" : null,
+    g.cacheWrite ? "缓存写累计 " + kfmt(g.cacheWrite) : null,
     // 成本只在 agent 自己报了的时候写。我们不查价目表去乘 —— 那是编的。
     // ★ 混宿主时只有一部分宿主报成本(codex 就不报),裸写一个数等于少报账 —— 标出来
     u.costUsd != null
@@ -369,7 +383,7 @@ function renderUsage(u, curN, W) {
     (wide ? padL("本轮 in/out", 14) + "  " : "") + padL("累计 in/out", 14) + "  在干什么"));
   u.agents.forEach(function (a, i) {
     const col = ROLE_COLORS[i % ROLE_COLORS.length];
-    const r = roundOf(a.role);
+    const r = roundOf(a.key);
     const rtxt = r ? kfmt(r.in) + "/" + kfmt(r.out) : "—";
     const ttxt = kfmt(a.in) + "/" + kfmt(a.out);
     L.push("  " + col(pad(a.role, 12)) + C.dim(pad(shortModel(a.model), 13)) +
@@ -458,16 +472,8 @@ function renderLines(st, width, view) {
     b.noProgressRounds ? "零进展 " + b.noProgressRounds + " 轮停" : null
   ].filter(Boolean).join(C.dim(" · "));
   if (budget) L.push(kv("预算", C.dim(budget)));
-  // 有上报就报真数;没有就说「没人报账」而不是「不可得」——
-  // 聊天里驱动的那条路确实报不出,但 tui/页面起的这条报得出,不能一句话把两条都盖了
-  if (run.mode === "host") {
-    L.push(kv("用量", usg.measured
-      ? kfmt(usg.grand.in + usg.grand.out) +
-        (usg.costUsd != null ? C.dim("  ·  ") + C.green("$" + usg.costUsd.toFixed(2)) : "") +
-        // 只含角色 —— 协调者本人的 token 摊不出来。不标一句,这个数会被当成全部花费
-        C.dim("  仅角色（协调者本人摊不出来）")
-      : C.dim("角色还没干活 · 暂无用量")));
-  }
+  // 用量不单开一行也不单开区域(用户点名:「用量显示在角色后面就够了」) ——
+  // 数字全在下面的角色行上;要深挖逐轮/工具明细,走 `code-forge usage`
 
   // 展开/选中哪一轮:调用方(直播那层)说了算;没说就是最后一轮 —— 也就是老样子
   const openN = view && "open" in view ? view.open : (cur ? cur.n : null);
@@ -487,8 +493,11 @@ function renderLines(st, width, view) {
       const mine = (usg.agents || []).filter(function (a) { return a.role === r.name; });
       const measured = mine.length
         ? mine.reduce(function (acc, a) {
-          acc.in += a.in; acc.out += a.out; return acc;
-        }, { in: 0, out: 0 })
+          acc.in += a.in; acc.out += a.out;
+          acc.cache += (a.cacheRead || 0) + (a.cacheWrite || 0);
+          if (a.ctx != null) acc.ctx = (acc.ctx || 0) + a.ctx;   // 各 agent 末次上下文之和
+          return acc;
+        }, { in: 0, out: 0, cache: 0, ctx: null })
         : null;
       // 模型也可能不止一个(中途换过 / 同角色派了不同模型):都列出来,不挑一个当代表
       const models = [];
@@ -497,15 +506,23 @@ function renderLines(st, width, view) {
         if (m && models.indexOf(m) < 0) models.push(m);
       });
       const model = models.length ? models.join("/") : r.model;
-      // in/out 各自成列。写成一整串再右对齐,位数一变整列就跳,读起来像在抖。
-      // 量不到就明说「不可得」—— 空着会被读成「没花」,而聊天里子 agent 是花在订阅账上
-      // 账的优先级:独立进程自报(最准) > loop_say 带的 tok > 不可得
+      // 账的优先级:独立进程/档案自报(最准) > loop_say 带的 tok > 留空
+      // (量不到就空着 —— 用户点名:「没发言的不需要显示 token 不可得,显示空就可以了」)
+      /* ★ 首位那个数用 **Claude Code 同口径**:该角色各 agent **末次上下文**之和。
+       *   两个方向都实测踩过:只显示 in+out(8k)被对照协调者屏上的 300k+ 当成漏账;
+       *   改成历次缓存读累计(13.98M)又被当成账炸了(「预计只有 1000k 上下」)——
+       *   Claude Code 给每个 agent 显示的是它当前的上下文规模,这里必须同一把尺。
+       *   出 token 单列在后:占了多大上下文看前者,干出多少活看它。 */
       const said = (r.tokIn || 0) + (r.tokOut || 0);
       const io = measured
-        ? padL(kfmt(measured.in), 7) + "↑ " + padL(kfmt(measured.out), 6) + "↓"
+        ? (measured.ctx != null
+          ? C.dim("上下文") + padL(kfmt(measured.ctx), 7) + " " + padL(kfmt(measured.out), 6) + "↓"
+          // 老事件/别的宿主没报 ctx 时退回含缓存累计 —— 有什么报什么,不硬凑
+          : C.dim("含缓存") + padL(kfmt(measured.in + measured.out + measured.cache), 7) +
+            " " + padL(kfmt(measured.out), 6) + "↓")
         : said > 0
           ? padL(kfmt(r.tokIn || 0), 7) + "↑ " + padL(kfmt(r.tokOut || 0), 6) + "↓"
-          : (r.id === "gate" ? "" : pad("token 不可得", 15));
+          : "";
       // 判据不是辩论的一方(它不发表意见,只跑命令),记号也不该跟角色一样。
       // 正在干活的角色记号换成 spinner 帧(view.activeRole 由直播层判定:最近有它的活动) ——
       // 「谁在动」要在角色表上看得见,不只是底部那一行字
@@ -514,7 +531,7 @@ function renderLines(st, width, view) {
         : r.id === "gate" ? "▪" : r.calls ? GL.dot : GL.ring;
       // 窄屏先砍列,不许让行溢出去 —— 溢出的行会被终端硬折成两行,整屏就散了
       const showIo = W >= 84;
-      const mw = Math.max(8, Math.min(20, W - 22 - (showIo ? 19 : 0)));
+      const mw = Math.max(8, Math.min(20, W - 22 - (showIo ? 24 : 0)));
       L.push({
         text: "  " + col(mark) + " " + pad(r.name, 11) +
           C.dim(pad(model, mw)) + C.dim(padL(r.calls ? r.calls + " 次" : "未发言", 7)) +
@@ -648,8 +665,8 @@ function renderLines(st, width, view) {
     });
   }
 
-  renderUsage(usg, openN != null ? openN : (cur ? cur.n : 0), W)
-    .forEach(function (l) { L.push(l); });
+  // 用量区域从直播画面里撤了(用户点名:「不需要用量区域,用量显示在角色后面就够了」)。
+  // renderUsage 保留给 `code-forge usage` 一类深挖场景与测试 —— 口径逻辑还在那里钉着。
 
   // ── 收尾:整条横杠上色。这一屏只有这一处允许「大面积颜色」——
   //    它是唯一一个「看完就可以走了」的信号,值得被一眼撞见。
@@ -1347,7 +1364,10 @@ function newWindowCmd(platform, cmdline, has) {
     // Windows Terminal 在就用它(标签页、字体、鼠标都正常);没有就退回 cmd 的 start。
     // ⚠ `start` 的第一个引号参数会被当成**窗口标题**,所以那个空标题不能省。
     if (has("wt")) return { cmd: "wt", args: ["new-tab", "cmd", "/k", cmdline] };
-    return { cmd: "cmd", args: ["/c", "start", "", "cmd", "/k", cmdline] };
+    // ⚠ cmd.exe 解析命令行不按 CommandLineToArgvW 的约定 —— node 默认的参数转义
+    // (给 cmdline 里的内嵌引号加 \) 会把 cmd 绕晕,含空格的 node 路径(Program Files)
+    // 一弹窗口就报错。verbatim:让 spawn 原样传,别替我们转义。
+    return { cmd: "cmd", args: ["/c", "start", "", "cmd", "/k", cmdline], verbatim: true };
   }
   if (platform === "darwin") {
     // osascript 是 macOS 上唯一不挑终端 app 的办法
@@ -1394,7 +1414,8 @@ function openInNewWindow(argv) {
     return false;
   }
   try {
-    spawn(plan.cmd, plan.args, { detached: true, stdio: "ignore" }).unref();
+    spawn(plan.cmd, plan.args, { detached: true, stdio: "ignore",
+      windowsVerbatimArguments: !!plan.verbatim }).unref();
   } catch (e) {
     console.error(C.yellow("弹终端失败：" + e.message));
     console.error(C.dim("自己开一个终端跑：") + cmdline);
@@ -1421,7 +1442,10 @@ async function main(argv) {
   const sub = argv[0];
   const mode = sub === "usage" ? "usage" : sub === "doctor" ? "doctor"
     : sub === "mousetest" ? "mousetest" : "watch";
-  const base = discoverBase();
+  /* --url:钉死看哪个台子。mcp 弹这个窗时数的是**它那个台子**的观众数 ——
+   * 这里再走一遍全局发现,端口文件恰好被别的实例(如测试台)抢走时就看错台子(实测)。 */
+  const uIdx = argv.indexOf("--url");
+  const base = uIdx >= 0 && argv[uIdx + 1] ? argv[uIdx + 1] : discoverBase();
 
   // mousetest / doctor 不碰监控台 —— 它们就是给「还没跑起来」的人用的
   if (mode === "mousetest") { await mouseTest(); return; }

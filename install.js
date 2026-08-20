@@ -554,7 +554,7 @@ if (UNINSTALL) {
   say("");
   say("终端不需要认识 code-forge:开跑时自动弹终端直播窗口,网页监控台地址也会一并给出。");
   say("");
-  say("角色与模型（可在 ~\.claude\agents 里改 model: 那一行,或聊天里点「改模型」）:");
+  say("角色与模型（可在 ~/.claude/agents 里改 model: 那一行,或聊天里点「改模型」）:");
   say("  forge-proposer  sonnet  读写+Bash   提最小改动并落地");
   say("  forge-critic    opus    只读        专门找反例（工具层面没有写权限）");
   say("  forge-reviewer  sonnet  只读        判绿后查是否把判据糊弄过去了");

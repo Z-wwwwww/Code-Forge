@@ -147,7 +147,16 @@ async function testStops() {
   ok("指标不动 → no_progress（首轮无基线不计入）");
 
   m = mk();
+  // seconds:0 = **不限时**(与 rounds/tokens 同一套规矩,回环修 bug 时改的语义):
+  // 首次 gate 不许再当成「时限 0 秒已超」立即停
   m.host.begin({ goal: failing, budget: { rounds: 9, seconds: 0, noProgressRounds: 99 }, roles: ROLES });
+  v = await m.host.gate();
+  assert.notStrictEqual(v.stopReason, "budget_time", "seconds:0 是不限时,不是立即超时");
+  ok("seconds:0 = 不限时（与 rounds/tokens 同一套 0=不限的规矩）");
+
+  m = mk();
+  m.host.begin({ goal: failing, budget: { rounds: 9, seconds: 1, noProgressRounds: 99 }, roles: ROLES });
+  await new Promise(function (r) { setTimeout(r, 1150); });
   v = await m.host.gate();
   assert.strictEqual(v.stopReason, "budget_time");
   ok("时限用完 → budget_time");
@@ -182,7 +191,8 @@ function testMcpEndToEnd() {
   const port = 4791;
   const logFile = path.join(os.tmpdir(), "cf-mcp-" + process.pid + ".jsonl");
   const consoleProc = spawn(process.execPath,
-    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile, "--port", String(port)],
+    [path.join(__dirname, "server.js"), "--no-open", "--reset", "--file", logFile,
+      "--port", String(port), "--no-port-file"],
     { stdio: ["ignore", "pipe", "pipe"] });
 
   return new Promise(function (resolve, reject) {
@@ -191,9 +201,13 @@ function testMcpEndToEnd() {
     setTimeout(function () { if (!ready) { consoleProc.kill(); reject(new Error("监控台起不来")); } }, 8000);
 
     function go() {
+      /* ★ CODE_FORGE_VIEW=none:这条 e2e 会把 loop_begin 走到 go,真开局后 ensureViewer
+       *   一看测试台 0 观众就会**真弹一个 watch 终端窗**。实测事故:用户刚立完目标,
+       *   协调者跑 npm test 摸基线,屏幕上凭空弹出 TUI、里面还全是旧档案。测试永不弹窗。 */
       const mcp = spawn(process.execPath,
         [path.join(__dirname, "server.js"), "--mcp", "--url", "http://localhost:" + port],
-        { stdio: ["pipe", "pipe", "pipe"] });
+        { stdio: ["pipe", "pipe", "pipe"],
+          env: Object.assign({}, process.env, { CODE_FORGE_VIEW: "none" }) });
       let out = "";
       const byId = {};
       const waiters = {};
@@ -552,6 +566,21 @@ async function testPackaging() {
   assert.strictEqual(st3.run.session, "B");
   ok("遇到新 run.start 换一茬（两次回环不混格）");
 
+  /* ★ 换茬必须把**流式提示**也换掉。实测:newState() 里漏了 streaming 键,
+   *   换茬逐键复位时它漏网 —— 新局刚开(R1 · 0 事件),挂的却是上一局的
+   *   「第 2 轮 · 距上一条发言已 593s(上一条:反驳者…)」,像旧回环还在跑。 */
+  const st4 = tui.newState();
+  [{ t: "run.start", session: "旧局" }, { t: "round.start", n: 2 },
+   { t: "run.streaming", role: "gate", text: "第 2 轮 · 距上一条发言已 593s" },
+   { t: "run.end", reason: "stopped" },
+   { t: "run.start", session: "新局" }, { t: "round.start", n: 1 }].forEach((e) => tui.reduce(st4, e));
+  assert.strictEqual(st4.streaming, null, "★ 新局不许继承旧局的流式提示");
+  const linesNew = tui.renderLines(st4, 100, { open: 1, max: 400, openEv: new Set() })
+    .map(function (l) { return typeof l === "string" ? l : l.text; }).join("\n");
+  assert.ok(linesNew.indexOf("第 2 轮 · 距上一条发言已") < 0,
+    "★ 画面上也不许出现旧局的活动行(两个渲染点:轮内活动行 + 底部进行中行)");
+  ok("★ 换茬连流式提示一起换（新局 R1 不再挂旧局的「第 2 轮 · 593s」）");
+
   /* ★ 连胜判据 + 不限轮数。
    *
    * 「修掉查出的 bug,直到**连续 3 轮** bug 数为 0」—— 单轮判过不算数,断一次从头攒;
@@ -815,6 +844,10 @@ async function testPackaging() {
     //   /health 的 clients = SSE 连接数;0 个观众才弹,有人看就不再糊窗口。
     assert.ok(/ensureViewer/.test(mcpSrc2) && /clients/.test(mcpSrc2),
       "★ loop_begin 后按观众数决定弹不弹(clients===0 才弹)");
+    // ★ 第二道闸(实测反馈):台子上没有**进行中的回环**就不许弹 ——
+    //   弹出去只能回放已停止的旧档案,用户会以为「旧回环还在跑/又被跑了一遍」。
+    assert.ok(/ensureViewer[\s\S]{0,900}host\/status[\s\S]{0,300}active/.test(mcpSrc2),
+      "★ ensureViewer 先查 /host/status.active —— 没有进行中的回环绝不弹窗");
     assert.ok(/loop_begin[\s\S]{0,2600}ensureViewer\(\)/.test(mcpSrc2),
       "loop_begin 成功后要真调 ensureViewer");
     assert.ok(!/if \(consoleChild\) log\("直播/.test(mcpSrc2),
@@ -825,6 +858,37 @@ async function testPackaging() {
         "CODE_FORGE_VIEW=none 时什么都不弹");
     } finally { delete process.env.CODE_FORGE_VIEW; }
     ok("★ 聊天里 loop_begin 弹的是终端直播（watch），浏览器只是退路；none 可关");
+
+    /* ★ npm test 不许弹窗、不许抢全局端口发现文件。实测事故:用户刚立完目标,
+     *   协调者跑 npm test 摸基线 —— e2e 里的 loop_begin 走到 go,ensureViewer 数的是
+     *   测试台(0 观众)于是真弹了 watch 窗;窗里按被测试台抢走的端口文件找台子,
+     *   测试台一死又拉起正式台,回放的全是旧档案。用户看到的就是
+     *   「配置还没确认,TUI 弹出来了,里面还是上一局的轮次和聊天」。 */
+    {
+      const TOKEN = "spawn(process.exec" + "Path";   // 拼出来,免得这段检查匹配到自己
+      ["test-host.js", "test.js"].forEach(function (f) {
+        const src = fs.readFileSync(path.join(__dirname, f), "utf8");
+        src.split(TOKEN).slice(1).forEach(function (seg) {
+          const head = seg.slice(0, 320);
+          if (head.indexOf("server.js") < 0) return;
+          if (head.indexOf('"--mcp"') >= 0) {
+            assert.ok(seg.slice(0, 700).indexOf("CODE_FORGE_VIEW") >= 0,
+              f + " 里起真 MCP 必须 CODE_FORGE_VIEW=none —— loop_begin 走到 go 会真弹直播窗");
+          } else if (head.indexOf("--port") >= 0) {
+            // 两种隔离都行:--no-port-file 关掉登记,或私有 tmpdir(测端口文件本身的那个用后者)
+            assert.ok(head.indexOf("--no-port-file") >= 0 || seg.slice(0, 700).indexOf("TMPDIR") >= 0,
+              f + " 里的测试台必须 --no-port-file(或私有 tmpdir)—— 抢了全局端口文件,别人弹的窗就找错台子");
+          }
+        });
+      });
+      const srvP = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+      assert.ok(/flag\("no-port-file"\)/.test(srvP), "server 要认 --no-port-file(一次性实例不参与全局发现)");
+      assert.ok(/watch --url/.test(mcpSrc2),
+        "★ mcp 弹的 watch 要带 --url 钉死台子 —— 数的是谁的观众,看的就得是谁");
+      assert.ok(/indexOf\("--url"\)/.test(fs.readFileSync(path.join(__dirname, "tui.js"), "utf8")),
+        "tui watch 要认 --url");
+      ok("★ 测试永不弹窗/永不抢端口文件；mcp 弹的 watch 用 --url 钉死自己那个台子");
+    }
   /* ★ 入口的约定(2026-08 收窄):执行只发生在 coding agent 里,终端只剩观察面。
    *   code-forge(裸) = watch;web = 监控台+浏览器;tui/go = 明确报「这条路移除了」并指回聊天。
    *   报错必须指路 —— 老用户敲 tui/go 时,一句「未知命令」等于把人扔在原地。 */
@@ -984,7 +1048,7 @@ async function testPackaging() {
     const { spawn } = require("child_process");
     const env2 = Object.assign({}, process.env, { CODE_FORGE_IDLE_MS: "400" });
     const c = spawn(process.execPath, [path.join(__dirname, "server.js"),
-      "--no-open", "--port", "4661", "--file",
+      "--no-open", "--port", "4661", "--no-port-file", "--file",
       path.join(os.tmpdir(), "cf-idle-" + process.pid + ".jsonl")], { env: env2 });
     let out = "";
     c.stdout.on("data", function (d) { out += d; });
@@ -1011,7 +1075,7 @@ async function testPackaging() {
     const runOnce = function (port) {
       return new Promise(function (res) {
         const c = spawn(process.execPath, [path.join(__dirname, "server.js"),
-          "--no-open", "--port", String(port), "--file", f],
+          "--no-open", "--port", String(port), "--no-port-file", "--file", f],
           { env: Object.assign({}, process.env, { CODE_FORGE_IDLE_MS: "600" }) });
         let out = ""; c.stdout.on("data", function (d) { out += d; });
         c.on("close", function () { res(out); });
@@ -1137,7 +1201,8 @@ async function testPackaging() {
       budget: { rounds: 2, seconds: 600 }, roles: [{ name: "a", kind: "propose" }], quietWarnMs: 999999 });
     assert.strictEqual((await hT2.gate()).remaining.tokens, null, "不填 = 不限,remaining 回 null");
     hT2.end("stopped", "t");
-    // 观察面:预算行带 token 档;角色行模型永远在、token 量到显示/量不到写「不可得」
+    // 观察面:预算行带 token 档;角色行模型永远在、token 量到显示/量不到**留空**
+    // (用户点名:「没发言的不需要显示 token 不可得,显示空就可以了」)
     const stT = tui.newState();
     [{ t: "run.start", session: "s", mode: "host", goal: "g",
        budget: { rounds: 0, seconds: 7200, tokens: 500000 } },
@@ -1148,8 +1213,10 @@ async function testPackaging() {
     ].forEach(function (e) { tui.reduce(stT, e); });
     const scr = tui.render(stT, 100);
     assert.ok(/token 500\.0k/.test(scr), "★ 预算行要显示 token 档");
-    assert.ok(/token 不可得/.test(scr), "★ 量不到的角色写「不可得」—— 空着会被读成没花");
-    assert.ok(/33\.8k↑/.test(scr) && /opus-5/.test(scr), "量到的角色显示模型+in/out");
+    assert.ok(!/token 不可得/.test(scr), "★ 量不到的角色留空,不再写「token 不可得」(用户点名)");
+    // 角色行首位数字:有 ctx 用末次上下文;这条老事件没 ctx → 退回含缓存合计(33.8k+4.2k=38.0k)
+    assert.ok(/含缓存\s+38\.0k/.test(scr) && /4\.2k\s*↓/.test(scr) && /opus-5/.test(scr),
+      "量到的角色显示模型 + 合计 + 出 token");
     const noTok = tui.render((function () {
       const s2 = tui.newState();
       tui.reduce(s2, { t: "run.start", session: "s", budget: { rounds: 8, seconds: 3600 } });
@@ -1162,7 +1229,7 @@ async function testPackaging() {
       "★ 配置卡要有 token 预算题,首选不限");
     assert.ok(/tokens: \{ type: "number"/.test(mcpT) && /下界闸/.test(mcpT),
       "schema 要写明 tokens 只计量得到的部分(下界闸)");
-    ok("★ token 预算：首选不限、超了停 budget_tokens、不重复计汇总帧；角色行模型+token/不可得");
+    ok("★ token 预算：首选不限、超了停 budget_tokens、不重复计汇总帧；角色行模型+token/量不到留空");
   }
 
   /* ★ 轮内顺序与「在等谁」。用户实测困惑:「查出 bug 后长时间没进入修改步骤」——
@@ -1228,7 +1295,8 @@ async function testPackaging() {
     const prSrcA = fs.readFileSync(path.join(__dirname, "perrole.js"), "utf8");
     assert.ok(/opts\.onActivity/.test(prSrcA), "runRole 要逐行回调 onActivity");
     const jSrcA = fs.readFileSync(path.join(__dirname, "judge.js"), "utf8");
-    assert.ok(/opts\.onActivity/.test(jSrcA), "评审者在动时也要看得见");
+    // 只认「接了 onActivity」这个事实,不锁参数名(opts→o 这种重命名不该弄红这条)
+    assert.ok(/\.onActivity/.test(jSrcA), "评审者在动时也要看得见");
     const hSrcA = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
     assert.ok(/评审者 · /.test(hSrcA), "runGate 给 judge 也接了活动流");
     ok("★ 角色实时活动：→ Read/Grep 逐行直播(1.5s 节流)、带角色名、评审者同款");
@@ -1290,7 +1358,7 @@ async function testPackaging() {
     const htmlRP = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
     assert.ok(/rolepulse/.test(htmlRP) && /STORE\.streamingAt/.test(htmlRP),
       "网页同款:正在动的角色行内 spinner 与页头脉搏同帧转");
-    ok("★ 角色行：模型名必显(向导拦)、tok 三级账(独立进程>loop_say>不可得)、活跃角色带脉搏");
+    ok("★ 角色行：模型名必显(向导拦)、tok 三级账(独立进程>loop_say>留空)、活跃角色带脉搏");
   }
 
   /* ★ 每条聊天记录点开看细节(Claude Code 同款):body 全文/工具调用与结果/diff。
@@ -1356,7 +1424,7 @@ async function testPackaging() {
     }
     fs.writeFileSync(fA, evA.join("\n") + "\n");
     const conA = spawn(process.execPath, [path.join(__dirname, "server.js"),
-      "--no-open", "--port", "4713", "--file", fA],
+      "--no-open", "--port", "4713", "--no-port-file", "--file", fA],
       { env: Object.assign({}, process.env, { CODE_FORGE_IDLE_MS: "60000" }) });
     await new Promise(function (res) {
       conA.stdout.on("data", function (d) { if (/监控台/.test(String(d))) res(); });
@@ -1676,7 +1744,8 @@ async function testChatUsage() {
   const st = tui.newState();
   [{ t: "run.start", session: "s", mode: "host", budget: { rounds: 0, seconds: 60 } },
     { t: "role.add", id: "role2", name: "反驳者", model: "宿主模型" },
-    { t: "usage", agent: "a1", role: "反驳者", model: "claude-opus-5", round: 1, in: 10, out: 20 },
+    { t: "usage", agent: "a1", role: "反驳者", model: "claude-opus-5", round: 1,
+      in: 10, out: 20, cacheRead: 900, cacheWrite: 30 },
     { t: "usage", agent: "a2", role: "反驳者", model: "claude-opus-5", round: 1, in: 30, out: 40 }
   ].forEach(function (ev) { tui.reduce(st, ev); });
   const row = tui.renderLines(st, 100, {}).map(function (l) { return l.text; })
@@ -1684,12 +1753,71 @@ async function testChatUsage() {
     .replace(/\x1b\[[0-9;]*m/g, "");
   assert.ok(row.indexOf("opus-5") >= 0,
     "★ 角色行要显示**量到的真模型**,而不是配置里那个「宿主模型」占位");
-  assert.ok(/40\s*↑/.test(row) && /60\s*↓/.test(row),
-    "★ 同一角色的多份账要加起来(10+30↑ / 20+40↓);只取第一份会少报一大截。实际:" + row);
+  /* ★ 首位数字用 **Claude Code 同口径**(in+out+缓存读写=1030)。实测:协调者屏上
+   *   反驳者已 300k+,这边只显示 in+out 的 8k —— 两把尺子,被用户当成账错了。 */
+  assert.ok(row.indexOf("含缓存") >= 0 && /1\.0k|1030/.test(row) && /0\.06k\s*↓/.test(row),
+    "★ 角色行 = 含缓存总数(10+30+20+40+900+30) + 出 token(60→0.06k,小数字也带单位);" +
+    "多份账都要加进来。实际:" + row);
   assert.ok(row.indexOf("不可得") < 0, "量到了就不许再写「token 不可得」");
+  // ★ 直播画面不再有独立的用量区域(用户点名:「用量显示在角色后面就够了」)
+  const fullScr = tui.renderLines(st, 100, {}).map(function (l) { return l.text; }).join("\n")
+    .replace(/\x1b\[[0-9;]*m/g, "");
+  assert.ok(fullScr.indexOf("agent 自己报的") < 0, "★ 用量区域从直播画面撤掉,数字只在角色行上");
 
   try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) {}
   ok("★ 聊天路径的账:按 id 去重、开局前的不算、别人的子 agent 不算、只发增量;角色行显示真模型与合计");
+
+  /* ★ 轮内账按 **key(agent id)** 对,不按角色名。实测:三个反驳者并发,
+   *   用量表「本轮」列三行全是第一份的 46/14.5k,工具列也一样 —— 按名字对全撞在第一份上。 */
+  {
+    const usage = require("./usage.js");
+    const u2 = usage.reduceEvents([
+      { t: "usage", agent: "c1", role: "反驳者", round: 1, in: 1, out: 100, tools: { Read: 9 } },
+      { t: "usage", agent: "c2", role: "反驳者", round: 1, in: 2, out: 7, tools: { Grep: 2 } }
+    ]);
+    assert.ok(u2.rounds[0].agents.every(function (a) { return a.key; }), "轮内账要带 key");
+    const tbl = require("./tui.js").renderUsage(u2, 1, 120).map(function (l) {
+      return (typeof l === "string" ? l : l.text).replace(/\x1b\[[0-9;]*m/g, "");
+    }).join("\n");
+    assert.ok(/1\/0\.1k/.test(tbl) && /2\/7/.test(tbl),
+      "★ 同名 agent 的本轮列要各是各的账,不许全显示第一份。实际:\n" + tbl);
+    assert.ok(/Read×9/.test(tbl) && /Grep×2/.test(tbl),
+      "★ 工具列同理 —— 各是各的。实际:\n" + tbl);
+    /* ★ 合计行的口径:头号数字 = 各 agent **末次上下文**之和(Claude Code 同口径);
+     *   缓存累计只能带着「计费口径」的解释降级摆 —— 两个方向都实测踩过
+     *   (只报 in+out 被当漏账;报缓存累计 14M 被当账炸了「预计只有 1000k 上下」)。 */
+    const u3 = usage.reduceEvents([
+      { t: "usage", agent: "c1", role: "反驳者", round: 1, in: 1, out: 2,
+        cacheRead: 500, cacheWrite: 40, ctx: 150000 }]);
+    const head3 = require("./tui.js").renderUsage(u3, 1, 120).map(function (l) {
+      return (typeof l === "string" ? l : l.text).replace(/\x1b\[[0-9;]*m/g, "");
+    }).join("\n");
+    assert.ok(/上下文 150\.0k（各 agent 末次之和,Claude Code 同口径）/.test(head3),
+      "★ 合计头号数字 = 末次上下文之和(Claude Code 同口径)。实际:\n" + head3);
+    assert.ok(/缓存重读累计 0\.5k（计费口径/.test(head3) && /缓存写累计 0\.04k/.test(head3),
+      "★ 缓存累计必须带「计费口径」解释降级摆,不许当头号数字。实际:\n" + head3);
+    // ctx 是快照:两次事件后取最新,不许累加
+    const u4 = usage.reduceEvents([
+      { t: "usage", agent: "c1", role: "反驳者", round: 1, in: 1, out: 2, ctx: 100000 },
+      { t: "usage", agent: "c1", role: "反驳者", round: 2, in: 1, out: 2, ctx: 120000 }]);
+    assert.strictEqual(u4.agents[0].ctx, 120000, "★ ctx 取最新快照,不累加");
+    assert.strictEqual(u4.grand.ctx, 120000, "★ 合计的 ctx 同理");
+  }
+
+  // ★ 拉账不能只挂在 loop_say/gate/status 上:子 agent 一跑十几分钟,期间协调者一声不吭,
+  //   角色行就一直「token 不可得」(实测)。静默看门狗每次心跳顺手拉一次。
+  const hostSrc = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
+  assert.ok(/quietTimer = setInterval[\s\S]{0,700}pullChatUsage\(\)/.test(hostSrc),
+    "★ 静默看门狗的心跳里要 pullChatUsage —— 角色干活期间账也得动");
+
+  // ★ 网页排行与 TUI 同口径:条长/排序/头号数字都含缓存,分段=真进出/缓存
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  assert.ok(/r\.inTok \+ r\.outTok \+ \(r\.cacheRead \|\| 0\) \+ \(r\.cacheWrite \|\| 0\)/.test(html),
+    "★ 网页排行的总数要含缓存(Claude Code 同口径),不然网页 8k、协调者屏上 300k+,像账错了");
+  // ★ 网页的 k1 要有 M 档(tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
+  //   实测「13980.0k」被当成数字算错了报 bug,其实只是格式化只认 k
+  assert.ok(/function k1\(n\)\{[^\n]*1e6[^\n]*M/.test(html),
+    "★ k1 缺 M 档:百万级 token 会打成「13980.0k」,像账错了");
 }
 
 async function testUsage() {

@@ -69,10 +69,18 @@ function openView(base, log) {
       const t = require("./tui.js");
       const cli = require("./agentcli.js");
       const q = function (x) { return /[\s"]/.test(x) ? '"' + x + '"' : x; };
-      const line = q(process.execPath) + " " + q(path.join(__dirname, "tui.js")) + " watch";
+      /* ★ --url 钉死看哪个台子。ensureViewer 数的是 state.base 那个台子的观众数 ——
+       *   弹出的窗若再走一遍全局发现(端口文件),文件恰好被别的实例(如 npm test 的
+       *   一次性测试台)抢走时就会看错台子(实测:弹出的窗回放的是旧档案)。 */
+      const line = q(process.execPath) + " " + q(path.join(__dirname, "tui.js")) +
+        " watch --url " + q(base);
       const plan = t.newWindowCmd(process.platform, line, function (b) { return !!cli.which(b); });
       if (plan) {
-        spawn(plan.cmd, plan.args, { detached: true, stdio: "ignore" }).unref();
+        // windowsVerbatimArguments 跟 tui.js:openInNewWindow 保持一致 —— 没有 wt 时
+        // newWindowCmd 会拼一条整串命令行给 cmd /c start,漏了这个选项在 Windows 上
+        // node 路径带空格时新窗口起不来(实测过)。
+        spawn(plan.cmd, plan.args, { detached: true, stdio: "ignore",
+          windowsVerbatimArguments: !!plan.verbatim }).unref();
         return "tui";
       }
       log("没找到终端模拟器,直播退回浏览器");
@@ -350,7 +358,31 @@ function createHandler(state) {
     return false;
   }
 
+  // ⚠ 内部 fetch 撞 Node 内置 undici 的默认 headersTimeout=300s:loop_agent/loop_gate
+  // 常跑超 5 分钟,一撞就报假失败(UND_ERR_HEADERS_TIMEOUT)并被上层重试。
+  // 真正的修法是拿到 undici 的 Agent 把 headersTimeout/bodyTimeout 设成 0 再
+  // setGlobalDispatcher/per-request dispatcher —— 但这要求能 require("undici")。
+  // 实测过:这个仓库不装 undici 依赖(零依赖),裸 node_modules 下 require("undici")
+  // 直接 MODULE_NOT_FOUND;Node 内置 fetch 也不对外暴露任何配置 dispatcher 超时的
+  // 公开 API。所以下面这段**不能真正解除 300s 限制** —— 只是在环境里恰好能
+  // require 到 undici(比如它被别的包提到了 node_modules 顶层)时顺手用上,
+  // 多数安装不会有这个包,那时超 300s 的判据/agent 调用依然会被 UND_ERR_HEADERS_TIMEOUT
+  // 打断。AbortSignal.timeout(3600000) 只是给单个请求加一道 1 小时的兜底中止点,
+  // 跟 headersTimeout 是两件事,加了它也挡不住 300s 那次假失败。
+  // 不加依赖前提下从客户端侧无法根治 —— 真正的根治点在服务端:改成异步执行 +
+  // 轮询/SSE 取结果,不要把 HTTP 响应挂在长任务结束上;这是架构改动,本轮不做。
+  let noTimeoutDispatcher;
+  try {
+    const { Agent } = require("undici");
+    noTimeoutDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+  } catch (_) { noTimeoutDispatcher = null; }
   async function api(path, init) {
+    init = init || {};
+    if (noTimeoutDispatcher) {
+      init = Object.assign({}, init, { dispatcher: noTimeoutDispatcher });
+    } else if (!init.signal) {
+      init = Object.assign({}, init, { signal: AbortSignal.timeout(3600000) }); // 不解决 300s 假失败,只挡「真正卡死」的极端情况
+    }
     const res = await fetch(state.base + path, init);
     const text = await res.text();
     let body = {};
@@ -375,6 +407,14 @@ function createHandler(state) {
        */
       async function ensureViewer() {
         try {
+          /* ★ 双闸。②是实测反馈加的:弹出的窗若只能回放**已停止的旧回环**,
+           *   用户会以为「旧回环还在跑/又被跑了一遍」。这里只在 begin 成功后调,
+           *   active 本该必真 —— 但把闸放进代码里,将来谁在别处误调也弹不出误导窗。 */
+          const s = await api("/host/status");
+          if (!(s.ok && s.body && s.body.active)) {
+            log("台子上没有进行中的回环,不弹直播(弹出去只能回放旧档案)");
+            return;
+          }
           const r = await api("/health");
           if (r.ok && (r.body.clients || 0) === 0) log("直播 → " + openView(state.base, log));
           else log("已有 " + ((r.body && r.body.clients) || 0) + " 个观众在看,不再弹窗");
@@ -606,8 +646,9 @@ function serve(opts) {
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: id,
       error: { code: -32603, message: message } }) + String.fromCharCode(10));
   };
+  process.stdin.setEncoding("utf8"); // 不设的话跨 64KB 块的中文会被硬切成 U+FFFD
   process.stdin.on("data", function (chunk) {
-    buf += chunk.toString();
+    buf += chunk;
     let nl;
     while ((nl = buf.indexOf(String.fromCharCode(10))) >= 0) {
       const line = buf.slice(0, nl).trim();

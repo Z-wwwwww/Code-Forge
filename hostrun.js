@@ -85,7 +85,10 @@ function create(append) {
       // null = 不限轮。不用 Infinity:JSON.stringify 会把它悄悄变成 null,不如一开始就明说
       rounds: st.cfg.budget.rounds === 0 ? null
         : Math.max(0, st.cfg.budget.rounds - st.round),
-      seconds: Math.max(0, Math.round(st.cfg.budget.seconds - (Date.now() - st.startedAt) / 1000)),
+      // seconds:0 跟 rounds/tokens 同一套规矩 —— 0 = 不限时,回 null 而不是让
+      // Math.max(0, 负数) 悄悄夹成 0(那样首次 loop_gate 就会当成 budget_time 停掉)
+      seconds: st.cfg.budget.seconds === 0 ? null
+        : Math.max(0, Math.round(st.cfg.budget.seconds - (Date.now() - st.startedAt) / 1000)),
       tokens: st.cfg.budget.tokens === 0 ? null
         : Math.max(0, st.cfg.budget.tokens - (st.tokensUsed || 0))
     };
@@ -104,6 +107,9 @@ function create(append) {
     let baseline = Date.now();
     quietTimer = setInterval(function () {
       if (!st.active) { clearInterval(quietTimer); quietTimer = null; return; }
+      /* ★ 顺手拉一次账。原来只在 loop_say/gate/status 时拉 —— 子 agent 一跑十几分钟,
+       *   期间协调者一声不吭,角色行就一直挂着「token 不可得」,而账在档案里明明在涨(实测)。 */
+      pullChatUsage();
       const last = Math.max(st.startedAt, st.lastSayAt || 0);
       if (last > baseline) { baseline = last; warned = 0; return; }   // 有新发言:重新计
       warned++;
@@ -133,6 +139,8 @@ function create(append) {
     // 会报账;Claude Code 的子 agent 从它自己的档案里读得到(chatusage.js)。
     // 协调者本人的账摊不出来 —— 所以这个闸是**下界闸**,如实标注。
     budget.tokens = Math.max(0, Math.floor(Number(budget.tokens) || 0));
+    // 时限:同样规范成非负整数,配合 remaining() 里「0 = 不限」的处理
+    budget.seconds = Math.max(0, Math.floor(Number(budget.seconds) || 0));
     const PALETTE = ["#6FD3C7", "#E2707A", "#E8C468", "#7EA8F0", "#63C68E", "#C08CF0", "#E29A6B", "#8B95A2"];
     const roles = cfg.roles.map(function (r, i) {
       return {
@@ -153,6 +161,15 @@ function create(append) {
     st.saidValue = null;
     st.tokensUsed = 0;
     st.turns = 0; st.endedReason = null;
+    // ⚠ 这些是上一局的残留状态 —— 同一个进程(比如常驻的 MCP server)跑第二局时
+    // 若不清,新的一局一开局就会被上一局死掉的尸体判死(比如上一局挖出的 stalls/
+    // idleRounds 直接带进新一局的 idle_spin/stalled 判定)。actedThisRound 归位到
+    // null(不知道),跟每轮末尾重置时的语义一致 —— 不是 false(那等于「观察到没动」)。
+    st.stalls = []; st.idleRounds = 0; st.lastFp = null; st.actedThisRound = null;
+    // ⚠ 同一进程里旧局若卡在 runGateInner 的 await(慢判据)时被 loop_end 收掉,
+    // st.active 会翻 false 但 gateRunning 锁不会被那次 end 动 —— 不清掉的话,
+    // 这里刚开的新局第一次 loop_gate 会被残留的锁拒掉。begin 是新局的起点,归零。
+    st.gateRunning = false;
 
     append({
       t: "run.start",
@@ -243,6 +260,27 @@ function create(append) {
    */
   async function runGate(opts) {
     if (!st.active) return { error: "还没有 loop_begin" };
+    // 重入锁:判据是唯一能改「达标与否」状态(metStreak/round/gatePassed)的地方,
+    // 两次并发的 loop_gate 若都跑到底,会各自 metStreak++ —— 一轮就能把连胜刷成 2。
+    // 第二次调用直接被拒,调用方老老实实等第一次的结果。
+    if (st.gateRunning) {
+      return { error: "上一次 loop_gate 还没跑完 —— 判据不可重入,等它返回结果再调" };
+    }
+    st.gateRunning = true;
+    try {
+      return await runGateInner(opts);
+    } finally {
+      st.gateRunning = false;
+    }
+  }
+
+  async function runGateInner(opts) {
+    // ★ 回合代次守卫:begin() 每次都把 startedAt 重设成新时间戳(它同时也是 runId),
+    //   在这里跑之前的 await(gate.check/judge.check)之外先捕获一份 —— 等 await 都
+    //   完了再跟 st.startedAt 比对。不只挡「同一局被 loop_end」(那种 st.active 会变
+    //   false),更要挡「旧局的 await 还没回来,新局已经 begin」——那种 st.active 早被
+    //   新局重新置回 true,单靠 !st.active 判断不出「这结果是哪一局的」。
+    const gen = st.startedAt;
     // 判据在一轮的末尾跑 —— 这一刻把这一轮各角色的账收齐,token 预算闸才是按真数关的
     pullChatUsage();
     const goal = st.cfg.goal || {};
@@ -253,31 +291,50 @@ function create(append) {
     // 「修 bug 直到连续 3 轮挖不出新 bug」—— bug 数来自反驳者每轮挖掘的结果,
     // 世界上没有一条命令能数它。goal.metric.source==="say" + max:0 + streak:3 就是这个判据。
     const m = goal.metric || {};
+    // hasSay = **纯 say 判据**(没有命令,say 是唯一的判定来源)。
+    // hasSayMetric = 只要配了 say 指标(带 min/max)就为真,不管有没有 command/rubric ——
+    // 否则 command+say 组合会把 say 判据静默丢掉(达标只看 command,say 报的数没人理)。
     const hasSay = !hasCmd && m.source === "say";
-    let g;
-    if (hasSay) {
+    const hasSayMetric = m.source === "say" && (m.min != null || m.max != null);
+    function evalSayMetric() {
       const sv = st.saidValue && st.saidValue.round === st.round ? st.saidValue : null;
       const v = sv ? sv.value : null;
       const okMin = m.min == null || (v != null && v >= m.min);
       const okMax = m.max == null || (v != null && v <= m.max);
       const range = [m.min != null ? "≥ " + m.min : null, m.max != null ? "≤ " + m.max : null]
         .filter(Boolean).join(" 且 ");
-      g = v == null
+      return { v: v, ok: v != null && okMin && okMax, range: range, role: sv && sv.role };
+    }
+    let g;
+    if (hasSay) {
+      const say = evalSayMetric();
+      g = say.v == null
         ? { met: false, value: null, broken: false, ms: 0, fp: null, output: "",
             skipped: "本轮没人报 " + (m.name || "指标") +
               " —— 反驳者/复核者 loop_say 要带 value(本轮量出来的数);提议者报的不算" }
-        : { met: okMin && okMax, value: v, broken: false, ms: 0,
+        : { met: say.ok, value: say.v, broken: false, ms: 0,
             // 指纹用「轮次:值」—— 连续同值是这种判据的预期形态,零进展闸门另有 met 分支护着
             fp: null, output: "",
-            detail: (m.name || "指标") + " = " + v + "（" + sv.role + " 报的,要求 " + range + "）" };
+            detail: (m.name || "指标") + " = " + say.v + "（" + say.role + " 报的,要求 " + say.range + "）" };
     } else {
       g = await gate.check(goal);
+      // command(/rubric)判据之外**同时**配了 say 指标 —— 两边都得过,say 不能被静默吞掉
+      if (hasSayMetric) {
+        const say = evalSayMetric();
+        const sayDetail = say.v != null
+          ? (m.name || "指标") + "(say) = " + say.v + "（" + say.role + " 报的,要求 " + say.range + "）"
+          : "本轮没人报 " + (m.name || "指标") + "(say)";
+        g = Object.assign({}, g, {
+          met: !!g.met && say.ok,
+          detail: (g.detail || "") + " · " + sayDetail
+        });
+      }
     }
-    // 只有 rubric 没有命令时,gate.check 会回 skipped —— 那不是「未达标」,
+    // 只有 rubric 没有命令、也没有 say 判据时,gate.check 会回 skipped —— 那不是「未达标」,
     // 是「这一半判不了」,判定权交给评审者。
-    const cmdOk = hasCmd ? !!g.met : true;
+    const cmdOk = (hasCmd || hasSay) ? !!g.met : true;
 
-    if (hasCmd || !hasRubric) {
+    if (hasCmd || hasSay || hasSayMetric || !hasRubric) {
       append({
         t: "event", round: st.round, role: "gate", kind: "test",
         ts: stamp(), dur: ((g.ms || 0) / 1000).toFixed(1) + "s", tok: { in: 0, out: 0 },
@@ -295,7 +352,8 @@ function create(append) {
     let j = null;
     if (hasRubric && cmdOk && !g.broken) {
       j = await judge.check({
-        task: st.cfg.task || st.cfg.session, rubric: goal.rubric, cwd: goal.cwd,
+        task: st.cfg.task || st.cfg.session, rubric: goal.rubric,
+        cwd: st.cfg.cwd || (st.cfg.goal && st.cfg.goal.cwd) || process.cwd(),
         command: hasCmd ? goal.command : null,
         said: (opts && opts.said) || [], round: st.round,
         agent: goal.judgeAgent || null, model: goal.judgeModel || null,
@@ -328,6 +386,15 @@ function create(append) {
       });
     }
 
+    // 上面两个 await(gate.check / judge.check)执行期间,回环可能已经被 loop_end
+    // 收掉了,甚至新的一局已经 begin —— 那样的话不能再往下写 round.end/round.start,
+    // 否则会在 run.end 之后又续上一轮,甚至把这一局的判据结果污染到下一局头上(旧局
+    // 的 metStreak++/round.end/finish 全按新局的状态去改)。st.startedAt !== gen
+    // 就是「已经换局」的证据,跟 !st.active 一样都要作废。
+    if (!st.active || st.startedAt !== gen) {
+      return { error: "回环在判据跑的时候已经结束或换局了(loop_end/新一局 loop_begin 先到),这次判据结果作废" };
+    }
+
     // 达标 = 该过的都过了。命令是硬门槛,评审是它覆盖不到的那部分。
     const met = hasRubric ? (cmdOk && !!(j && j.met)) : !!g.met;
     // 连胜判据:单轮判过只是「本轮过」,连续 need 轮都过才算达标。
@@ -348,9 +415,9 @@ function create(append) {
       // 反驳者接着挖才是这几轮该干的事。但时限和轮数上限照常管着。
       st.noProgress = 0;
       if (g.value != null) st.lastValue = g.value;
-      if (g.fp) st.lastFp = g.fp;
+      if (g.fp != null) st.lastFp = g.fp;   // 空输出的 fp 是 "" —— falsy 但仍是有效指纹,得存
       const rem0 = remaining();
-      if (rem0.seconds <= 0) stop = "budget_time";
+      if (rem0.seconds != null && rem0.seconds <= 0) stop = "budget_time";
       else if (rem0.rounds != null && rem0.rounds <= 0) stop = "budget_rounds";
       else if (rem0.tokens != null && rem0.tokens <= 0) stop = "budget_tokens";
     }
@@ -362,7 +429,7 @@ function create(append) {
       const prog = gate.madeProgress(st.cfg.goal, st.lastValue, g.value, st.lastFp, g.fp);
       if (prog === false) st.noProgress++; else if (prog === true) st.noProgress = 0;
       if (g.value != null) st.lastValue = g.value;
-      if (g.fp) st.lastFp = g.fp;
+      if (g.fp != null) st.lastFp = g.fp;   // 同上:空串也要能存,否则 lastFp 永远不更新
 
       // ★ 空跑:这一轮各角色都说了话,但没有任何人真的改过东西。
       //   跟「零进展」不是一回事 —— 零进展是改了但没往好的方向走,空跑是**压根没改**。
@@ -380,7 +447,7 @@ function create(append) {
       if (st.stalls.length) stop = "stalled";
       else if (st.idleRounds >= idleMax) stop = "idle_spin";
       else if (st.noProgress >= st.cfg.budget.noProgressRounds) stop = "no_progress";
-      else if (rem.seconds <= 0) stop = "budget_time";
+      else if (rem.seconds != null && rem.seconds <= 0) stop = "budget_time";
       else if (rem.rounds != null && rem.rounds <= 0) stop = "budget_rounds";
       else if (rem.tokens != null && rem.tokens <= 0) stop = "budget_tokens";
     }
@@ -471,9 +538,13 @@ function create(append) {
    * 宿主主动收工。goal_met 只有在 gate 真的判过之后才接受 ——
    * 这条拒绝是整层的核心:不许模型给自己发合格证。
    */
+  // 达标类停止原因——不论是命令判过(goal_met)、评审判过(judged_met)还是角色上报
+  // 判过(reported_met),同样都是「自称达标」的语义,同样必须先过 gate 攒满连胜。
+  // 只挡 goal_met 会漏掉另外两条:agent 照样能拿 judged_met/reported_met 自己发合格证。
+  const MET_REASONS = { goal_met: true, judged_met: true, reported_met: true };
   function end(reason, detail) {
     if (!st.active) return { error: "当前没有在进行的回环" };
-    if (reason === "goal_met" && !st.gatePassed) {
+    if (MET_REASONS[reason] && !st.gatePassed) {
       // 连胜判据攒到一半时这句必须把进度说出来 —— 「还没判过」对着 2/3 的 agent 是错的
       const need = Math.max(1, Math.floor(Number(st.cfg.goal && st.cfg.goal.streak) || 1));
       return {
@@ -533,7 +604,7 @@ function create(append) {
       model: args.model || known.model || null,
       permissionMode: perrole.DEFAULT_PERM[kind] || "readOnly"
     };
-    const cwd = (st.cfg.goal && st.cfg.goal.cwd) || process.cwd();
+    const cwd = st.cfg.cwd || (st.cfg.goal && st.cfg.goal.cwd) || process.cwd();
     // 角色头写在服务端,不信调用方会带 —— 红线(反驳者不许改文件)必须每次都在
     const prompt = [
       "你是对抗回环里的「" + role.name + "」。职责：" + (perrole.DUTY[kind] || known.duty || ""),
@@ -565,7 +636,9 @@ function create(append) {
         " 上用不了(版本/账号不支持) —— 换一个,或不指定用默认。" };
     }
     const text = res.text || "";
-    if (!text) {
+    // 纯空白(" "/"\n\n")能骗过 !text 但骗不过 !text.trim() —— 不挡住的话下面
+    // split("\n").filter(...)[0] 会因为空数组的 [0] 是 undefined 而抛 TypeError
+    if (!text || !text.trim()) {
       return { error: role.name + " 没有产出最终答复(exit " + res.exitCode +
         (res.stalled ? "，卡住被中止" : "") + ")。日志尾部：" +
         (res.logs || []).slice(-3).join(" | ") };

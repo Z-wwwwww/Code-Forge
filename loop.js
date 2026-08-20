@@ -142,6 +142,7 @@ function start(config, append) {
   async function run() {
     const transcript = [];
     let prevValue = null;
+    let prevFp = null;
     let noProgress = 0;
     let reason = null;
     let detail = "";
@@ -217,9 +218,10 @@ function start(config, append) {
       if (g.met) { reason = "goal_met"; detail = g.detail; break; }
 
       // 零进展闸:指标一直不往目标方向走就停,别烧完预算才停
-      const prog = gate.madeProgress(cfg.goal, prevValue, g.value);
+      const prog = gate.madeProgress(cfg.goal, prevValue, g.value, prevFp, g.fp);
       if (prog === false) noProgress++; else if (prog === true) noProgress = 0;
       prevValue = g.value == null ? prevValue : g.value;
+      prevFp = g.fp;
       if (noProgress >= cfg.budget.noProgressRounds) {
         reason = "no_progress";
         detail = "连续 " + noProgress + " 轮没有进展（" + (cfg.goal.metric && cfg.goal.metric.name || "指标") + " 停在 " + prevValue + "）";

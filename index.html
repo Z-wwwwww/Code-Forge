@@ -361,7 +361,10 @@ function applyEvent(ev){
       var r = ensureRole(ev.id);
       if (ev.name) r.name = ev.name;
       if (ev.model) r.model = ev.model;
-      if (ev.color) r.color = ev.color;
+      // r.color 直接拼进十几处 style="background:...";没有白名单的话,
+      // 一个 color:'red" onmouseover="…' 就能在 style 属性外面再开一个属性 ——
+      // 只认合法的 CSS 颜色形状,不认就保留原来那份(FALLBACK_COLORS 分配的默认色)
+      if (ev.color && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(ev.color)) r.color = ev.color;
       if (ev.duty) r.duty = ev.duty;
       break;
     }
@@ -396,7 +399,22 @@ function applyEvent(ev){
     // 逐 agent 用量。执行者是我们自己 spawn 的 `claude -p` 时它每条消息都报 usage,
     // 于是上面那句「拿不到」在这条路上不成立 —— 有真数就用真数,没有才写「不可得」。
     case "usage": {
-      if (ev.total) { STORE.usageTotal = ev; break; }
+      if (ev.total) {
+        // 混宿主时**每个宿主各报一条 total** —— 原来 last-wins 会把先到的那份成本直接
+        // 丢掉(实测:只有一部分宿主报成本时少算账)。参照 usage.js reduceEvents 的
+        // costSum 语义:各字段相加,而不是整条覆盖。
+        var pt = STORE.usageTotal;
+        var prevCost = pt && typeof pt.costUsd === "number" ? pt.costUsd : null;
+        var curCost = typeof ev.costUsd === "number" ? ev.costUsd : null;
+        STORE.usageTotal = Object.assign({}, pt || {}, ev, {
+          in: (pt && pt.in || 0) + (ev.in || 0),
+          out: (pt && pt.out || 0) + (ev.out || 0),
+          cacheRead: (pt && pt.cacheRead || 0) + (ev.cacheRead || 0),
+          cacheWrite: (pt && pt.cacheWrite || 0) + (ev.cacheWrite || 0),
+          costUsd: (prevCost == null && curCost == null) ? null : (prevCost || 0) + (curCost || 0)
+        });
+        break;
+      }
       // 按**名字**认回回环里那个角色。用 ev.agent(tool_use id)当 key 会多出一行同名的,
       // 页面上就成了「提议者」和「提议者」两条账。
       var uid = null;
@@ -410,6 +428,9 @@ function applyEvent(ev){
       ur.outTok += ev.out || 0;
       ur.cacheRead = (ur.cacheRead || 0) + (ev.cacheRead || 0);
       ur.cacheWrite = (ur.cacheWrite || 0) + (ev.cacheWrite || 0);
+      // ctx 是**快照**(该 agent 末次调用的上下文规模):按 agent 记最新值,绝不累加 ——
+      // 累加就是把同一段上下文数 N 遍(实测 14M,被当成账炸了:「预计只有 1000k 上下」)
+      if (ev.ctx != null) { ur.ctxBy = ur.ctxBy || {}; ur.ctxBy[ev.agent || "?"] = ev.ctx; }
       ur.measured = true;
       Object.keys(ev.tools || {}).forEach(function(k){
         ur.tools = ur.tools || {};
@@ -446,6 +467,7 @@ function roundMeta(rd){
   return rd.meta ? rd.meta + " · " + counted : counted;
 }
 function winColorOf(rd){
+  if (!rd) return "#8B95A2";
   if (rd.live) return "#6B7482";
   var r = rd.winnerRole && STORE.roles[rd.winnerRole];
   return r ? r.color : "#8B95A2";
@@ -483,7 +505,9 @@ function modelStats(){
 var state = { round:null, follow:true, mode:"live", open:{}, expandAll:false, roleFilter:null };
 var conn = { state:"connecting", since:0 };
 
-function k1(n){ return (n / 1000).toFixed(1) + "k"; }
+// ⚠ 必须有 M 档(与 tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
+//   实测「13980.0k」被用户当成数字算错了报 bug,其实只是格式化只认 k
+function k1(n){ n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1000).toFixed(1) + "k"; }
 function tokLabel(tk){
   // null = 用量拿不到(聊天执行在用户订阅账上) —— 不显示,绝不写 0.0k(那是假账,实测被当成 bug 报过);
   // 真 0(判据事件,executor=code)写「0」——「拿不到」和「真的是零」必须长得不一样
@@ -566,8 +590,8 @@ function renderRoundList(){
     var on = cur && r.n === cur.n;
     var meta = r.live ? "进行中 · " + r.events.length + " 事件"
                       : r.events.length + " 事件 · " + r.conflicts.length + " 分歧";
-    return '<button class="ritem' + (on ? " on" : "") + '" data-act="round" data-v="' + r.n + '">' +
-      '<span class="n">R' + r.n + "</span>" +
+    return '<button class="ritem' + (on ? " on" : "") + '" data-act="round" data-v="' + esc(r.n) + '">' +
+      '<span class="n">R' + esc(r.n) + "</span>" +
       '<span class="mid"><span class="ti">' + esc(r.title) + '</span><span class="me">' + esc(meta) + "</span></span>" +
       '<span class="d" style="background:' + (r.live ? PROPS.accent : winColorOf(r)) + '"></span>' +
     "</button>";
@@ -576,12 +600,26 @@ function renderRoundList(){
 function renderRanking(){
   var rs = roleList();
   if (!rs.length) return '<div class="empty-min">还没有角色</div>';
-  var max = Math.max.apply(null, rs.map(function(r){ return r.inTok + r.outTok; }).concat([1]));
-  return rs.slice().sort(function(a,b){ return (b.inTok + b.outTok) - (a.inTok + a.outTok); }).map(function(r){
-    var total = r.inTok + r.outTok;
+  /* ★ 排行、条长、头号数字用 **Claude Code 同口径**:该角色各 agent **末次上下文**之和。
+   *   两个方向都实测踩过:只显示 in+out(8k)被当成漏账;显示历次缓存读累计(14M)
+   *   又被当成账炸了(「预计只有 1000k 上下」)—— Claude Code 给每个 agent 显示的
+   *   是它当前的上下文规模,这里必须同一把尺。老事件没报 ctx 时才退回含缓存累计。 */
+  var tot0 = function(r){
+    if (r.ctxBy) {
+      var s = 0, k;
+      for (k in r.ctxBy) s += r.ctxBy[k];
+      if (s > 0) return s;
+    }
+    return r.inTok + r.outTok + (r.cacheRead || 0) + (r.cacheWrite || 0);
+  };
+  var max = Math.max.apply(null, rs.map(tot0).concat([1]));
+  return rs.slice().sort(function(a,b){ return tot0(b) - tot0(a); }).map(function(r){
+    var live = r.inTok + r.outTok;
+    var total = tot0(r);
     var w = (total / max) * 100;
-    var inPct = (PROPS.showTokenSplit && total) ? (w * r.inTok / total) : 0;
-    var outPct = (PROPS.showTokenSplit && total) ? (w * r.outTok / total) : w;
+    // 亮段:真进出;暗段:其余(上下文里的缓存部分)。live 可能大于 ctx 口径的 total,夹一下
+    var inPct = (PROPS.showTokenSplit && total) ? Math.min(w, w * live / total) : 0;
+    var outPct = (PROPS.showTokenSplit && total) ? Math.max(0, w - inPct) : w;
     var op = (!state.roleFilter || state.roleFilter === r.id) ? "1" : "0.4";
     // 宿主执行:没有任何一次调用报得出用量 → 整行如实标「不可得」,不画一条假的 0 长度条
     var unknown = !total && r.tokUnknown > 0;
@@ -595,7 +633,7 @@ function renderRanking(){
       .map(function(k){ return [k.replace(/^mcp__.+__/, ""), r.tools[k]]; })
       .sort(function(a,b){ return b[1] - a[1]; }).slice(0, 3)
       .map(function(p){ return p[0] + "×" + p[1]; }).join(" ");
-    return '<button data-act="rank" data-v="' + r.id + '" style="opacity:' + op + '" title="' +
+    return '<button data-act="rank" data-v="' + esc(r.id) + '" style="opacity:' + op + '" title="' +
         esc(r.duty || r.name) + (unknown ? " · 这个角色还没有可读的账（干完活才有）" : "") + '">' +
       '<span class="top">' +
         '<span class="sw" style="background:' + r.color + '"></span>' +
@@ -612,7 +650,8 @@ function renderRanking(){
         (silent ? '<span>本回环还没轮到它</span>'
           : unknown ? '<span>暂无用量（干完活才有账）</span>'
           : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>" +
-            (r.cacheRead ? "<span>缓存 " + k1(r.cacheRead) + "</span>" : "")) +
+            ((r.cacheRead || r.cacheWrite)
+              ? "<span>缓存重读累计 " + k1((r.cacheRead || 0) + (r.cacheWrite || 0)) + "</span>" : "")) +
         "<span>" + esc(r.model) + "</span>" +
         (unknown || silent ? "" : "<span>" + (r.calls ? r.calls + " 次发言" : "不发言") + "</span>") +
         (toolTxt ? "<span>" + esc(toolTxt) + "</span>" : "") +
@@ -662,7 +701,7 @@ function renderChips(round){
   return list.map(function(c){
     var on = state.roleFilter === c.id;
     var style = on ? "background:" + c.color + "1F;border-color:" + c.color + "66;color:#E6E9EE" : "";
-    return '<button class="chip" data-act="chip" data-v="' + (c.id == null ? "" : c.id) + '" style="' + style + '">' +
+    return '<button class="chip" data-act="chip" data-v="' + (c.id == null ? "" : esc(c.id)) + '" style="' + style + '">' +
       '<span class="d" style="background:' + c.color + '"></span>' + esc(c.name) +
       '<span class="c">' + c.count + "</span></button>";
   }).join("");
@@ -685,13 +724,13 @@ function renderDiff(df){
     var sc = add ? "#63C68E" : del ? "#E2707A" : "#3A424C";
     var tc = add ? "#BFE7CE" : del ? "#EFC2C7" : "#7C8794";
     return '<div class="dl" style="background:' + bg + '">' +
-      '<span class="ln">' + (add ? "" : l.ln) + "</span>" +
+      '<span class="ln">' + (add ? "" : esc(l.ln)) + "</span>" +
       '<span style="color:' + sc + '">' + esc(l.sign) + "</span>" +
       '<span class="tx" style="color:' + tc + '">' + esc(l.text) + "</span></div>";
   }).join("");
   return '<div class="diff">' +
     '<div class="dh"><span class="f">' + esc(df.file) + '</span><span class="grow"></span>' +
-      '<span class="a">+' + df.add + '</span><span class="r">−' + df.del + "</span></div>" +
+      '<span class="a">+' + (Number(df.add) || 0) + '</span><span class="r">−' + (Number(df.del) || 0) + "</span></div>" +
     '<div class="lines">' + lines + "</div>" +
   "</div>";
 }
@@ -723,7 +762,7 @@ function renderEvents(round){
       '<div class="rail"><span class="d" style="border-color:' + r.color + ";background:" + (open ? r.color : "#0A0C0F") + '"></span>' +
         '<span class="ln"></span></div>' +
       '<div class="body"><div class="card' + (open ? " open" : "") + '" style="border-left-color:' + r.color + '">' +
-        '<button class="sum" data-act="toggle" data-v="' + key + '" aria-expanded="' + open + '">' +
+        '<button class="sum" data-act="toggle" data-v="' + esc(key) + '" aria-expanded="' + open + '">' +
           '<span class="role" style="color:' + r.color + '">' + esc(r.name) + "</span>" +
           '<span class="model">' + esc(r.model) + "</span>" +
           '<span class="kind" style="color:' + k.color + ";background:" + k.color + '16">' + k.label + "</span>" +
@@ -750,7 +789,7 @@ function renderMain(round, isLive){
   return '<main id="pane-m">' +
       '<div class="mhead">' +
         '<div class="row1">' +
-          '<div class="rt"><div class="l1"><span class="rn">ROUND ' + round.n + '</span>' +
+          '<div class="rt"><div class="l1"><span class="rn">ROUND ' + esc(round.n) + '</span>' +
             '<span class="ti">' + esc(round.title) + "</span></div>" +
             '<div class="me">' + esc(roundMeta(round)) + "</div></div>" +
           '<div class="grow"></div>' +
@@ -794,18 +833,18 @@ function renderPatches(){
   var all = [];
   STORE.rounds.forEach(function(rd){ rd.patches.forEach(function(p){ all.push(p); }); });
   if (!all.length) return '<div class="empty-min">还没有补丁</div>';
-  var sum = all.reduce(function(a,p){ a.add += p.add || 0; a.del += p.del || 0; return a; }, { add:0, del:0 });
+  var sum = all.reduce(function(a,p){ a.add += Number(p.add) || 0; a.del += Number(p.del) || 0; return a; }, { add:0, del:0 });
   var cur = curRound();
   var rows = all.map(function(p){
     var c = p.st === "ok" ? "#63C68E" : p.st === "warn" ? "#E8C468" : "#E2707A";
     var by = roleOf(p.by);
     var on = cur && p.round === cur.n;
     return '<div class="pt">' +
-      '<div class="rail"><span class="n" style="color:' + (on ? PROPS.accent : "#454E5A") + '">R' + p.round + "</span>" +
+      '<div class="rail"><span class="n" style="color:' + (on ? PROPS.accent : "#454E5A") + '">R' + esc(p.round) + "</span>" +
         '<span class="ln"></span></div>' +
       '<div class="b"><div class="pcard" style="border-color:' + (on ? "#242A32" : "#1B1F26") + '">' +
         '<div class="top"><span class="f">' + esc(p.file) + '</span><span class="grow"></span>' +
-          '<span class="a">+' + (p.add || 0) + '</span><span class="r">−' + (p.del || 0) + "</span></div>" +
+          '<span class="a">+' + (Number(p.add) || 0) + '</span><span class="r">−' + (Number(p.del) || 0) + "</span></div>" +
         '<div class="note">' + esc(p.note) + "</div>" +
         '<div class="foot"><span class="by" style="color:' + by.color + '">' + esc(by.name) + "</span>" +
           '<span class="st" style="color:' + c + ";border-color:" + c + '4D">' + esc(p.state) + "</span>" +
@@ -860,6 +899,15 @@ function render(){
   });
   if (!STORE.count) { app.innerHTML = renderEmpty(); return; }
   var round = curRound();
+  // 有事件但还没有任何轮次(比如只到了 run.start/role.add,round.start 还没来)——
+  // 不能把 null 传给 renderMain,它会去读 round.live 直接抛异常,而抛异常发生在
+  // innerHTML 赋值之前,页面就卡死在上一次渲染的画面(通常是「还没有事件」)不会再动。
+  if (!round) {
+    app.innerHTML = renderHeader(null, false) +
+      '<div class="empty"><div class="empty-card"><h1>还没有轮次</h1>' +
+      '<p>已经收到 ' + STORE.count + ' 条事件,但还没有 round.start —— 等第一轮开局。</p></div></div>';
+    return;
+  }
   var isLive = state.mode === "live" && !!(round && round.live);
   app.innerHTML = renderHeader(round, isLive) +
     '<div class="shell">' + renderLeft() + renderMain(round, isLive) + renderRight(round) + "</div>";

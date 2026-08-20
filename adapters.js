@@ -334,7 +334,12 @@ const unverified = [
     id: "opencode", label: "opencode", bin: "opencode", verified: false,
     subagents: false, cost: false, versionArgs: ["--version"], promptVia: "arg",
     perms: { auto: null, acceptEdits: null, bypassPermissions: null },
-    buildArgs: function (o) { return o.model ? ["run", "-m", o.model] : ["run"]; },
+    // promptVia:"arg" —— 提示词不走 stdin,得由调用方拼进 argv 的最后一位(见 perrole.js)
+    buildArgs: function (o) {
+      const args = o.model ? ["run", "-m", o.model] : ["run"];
+      if (typeof o.prompt === "string") args.push(o.prompt);
+      return args;
+    },
     mcp: { kind: "json", file: path.join(os.homedir(), ".config", "opencode", "opencode.json"),
       key: "mcp", entry: function (cmd) { return { type: "local", command: cmd, enabled: true }; } },
     parse: null   // 输出格式没实测 → 不假装能解。用量会如实显示「未上报」
@@ -357,9 +362,11 @@ const unverified = [
     id: "cursor-agent", label: "Cursor Agent", bin: "cursor-agent", verified: false,
     subagents: false, cost: false, versionArgs: ["--version"], promptVia: "arg",
     perms: { auto: null, acceptEdits: null, bypassPermissions: "--force" },
+    // promptVia:"arg" —— 同上,提示词得由调用方拼进 argv 的最后一位
     buildArgs: function (o) {
       const args = ["-p", "--output-format", "stream-json"];
       if (o.model) args.push("-m", o.model);
+      if (typeof o.prompt === "string") args.push(o.prompt);
       return args;
     },
     mcp: { kind: "json", file: path.join(os.homedir(), ".cursor", "mcp.json"),
