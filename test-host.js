@@ -1494,8 +1494,8 @@ async function testPackaging() {
     const tuiC = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
     const ESC = String.fromCharCode(27);
     assert.ok(tuiC.indexOf("[?1049h") >= 0, "★ 要切到备用屏幕(坐标系干净,不受 scrollback 干扰)");
-    assert.strictEqual((tuiC.match(/\[\?1049l/g) || []).length, 2,
-      "★ 退出要还原(quit 一处 + exit 兜底一处)—— 不许把用户终端留在备用屏");
+    assert.strictEqual((tuiC.match(/\[\?1049l/g) || []).length, 3,
+      "★ 退出要还原(quit + exit 兜底 + 崩溃兜底各一处)—— 不许把用户终端留在备用屏");
     assert.ok(tuiC.indexOf("[6n") >= 0 && /calibrated/.test(tuiC),
       "★ 首帧要问一次光标真实行号(DSR),只问一次");
     assert.ok(/rowOffset = Number\(dsr\[1\]\) - expectRow/.test(tuiC),
@@ -1518,8 +1518,8 @@ async function testPackaging() {
     assert.ok(tuiC.indexOf("x1b[2J") < 0, "★ 不许清屏 —— 擦白再画就是闪");
     assert.ok(/const EL = "\\x1b\[K"/.test(tuiC) && tuiC.indexOf("[J") >= 0,
       "★ 逐行 ESC[K 擦尾 + 收尾 ESC[J 擦掉上一帧多出来的行(不然会留残影)");
-    assert.strictEqual((tuiC.match(/\[\?7h/g) || []).length, 2,
-      "★ 退出要把折行还回去(quit 一处 + exit 兜底一处)");
+    assert.strictEqual((tuiC.match(/\[\?7h/g) || []).length, 3,
+      "★ 退出要把折行还回去(quit + exit 兜底 + 崩溃兜底各一处)");
     // DSR 响应不许被当成按键漏进按键分支(否则会触发莫名其妙的动作)
     const dataFn = tuiC.slice(tuiC.indexOf("const d = buf.toString"));
     assert.ok(dataFn.indexOf("dsr") < dataFn.indexOf("x03"),

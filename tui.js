@@ -1464,6 +1464,16 @@ async function main(argv) {
     return;
   }
 
+  /* ★ 崩溃落盘。实测:直播窗口崩了,用户只能说「tui 报错了」—— 栈随窗口一关就没了,
+   *   没人修得了一个没有栈的崩溃。落到临时目录,还原终端状态后把路径打出来。 */
+  process.on("uncaughtException", function (e) {
+    const f = path.join(os.tmpdir(), "code-forge-tui-crash.log");
+    try { fs.appendFileSync(f, new Date().toISOString() + "\n" + (e && e.stack || e) + "\n\n"); } catch (_) {}
+    try { process.stdout.write("\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?25h\x1b[?7h\x1b[?1049l"); } catch (_) {}
+    console.error("\n崩了：" + (e && e.message) + "\n完整栈已写入 " + f);
+    process.exit(1);
+  });
+
   // watch(默认)。agent 的 shell 里没有 TTY:不装画面,退化成顺序输出(watch 自己会判)
   const b = await ensureConsole(base);
   if (argv.includes("--web")) openWeb(b);
