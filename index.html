@@ -508,6 +508,17 @@ var conn = { state:"connecting", since:0 };
 // ⚠ 必须有 M 档(与 tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
 //   实测「13980.0k」被用户当成数字算错了报 bug,其实只是格式化只认 k
 function k1(n){ n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : (n / 1000).toFixed(1) + "k"; }
+/* 一个角色的头号 token 数,**全页同一把尺**(页头总计与左栏角色卡都用它):
+ * 有 ctx(各 agent 末次上下文,Claude Code 同口径)用 ctx 之和;老事件没报 ctx 才退回
+ * 含缓存累计。实测:页头 31.2k(in+out)与角色卡 10.65M 同屏,像两本账。 */
+function roleTot(r){
+  if (r.ctxBy) {
+    var s = 0, k;
+    for (k in r.ctxBy) s += r.ctxBy[k];
+    if (s > 0) return s;
+  }
+  return (r.inTok || 0) + (r.outTok || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0);
+}
 function tokLabel(tk){
   // null = 用量拿不到(聊天执行在用户订阅账上) —— 不显示,绝不写 0.0k(那是假账,实测被当成 bug 报过);
   // 真 0(判据事件,executor=code)写「0」——「拿不到」和「真的是零」必须长得不一样
@@ -533,7 +544,8 @@ function renderHeader(round, isLive){
   // 对不上(in 19 vs 29、cacheRead 56789 vs 88551),而且它只覆盖某一次调用。
   // 唯一能当全程用的是 total_cost_usd(=这次运行真花的钱),所以成本单独一格。
   var rep = STORE.usageTotal;
-  var totShown = t.in + t.out;
+  // 与左栏角色卡同一把尺(roleTot):页头 31.2k、角色卡 10.65M 同屏像两本账(实测)
+  var totShown = roleList().reduce(function(s, r){ return s + roleTot(r); }, 0);
   var gap = rep ? Math.max(0, (rep.out || 0) - t.out) : 0;
   var tabs = [{ key:"live", label:"实时" }, { key:"replay", label:"复盘" }].map(function(tb){
     return '<button data-act="mode" data-v="' + tb.key + '"' + (state.mode === tb.key ? ' class="on"' : "") + ">" + esc(tb.label) + "</button>";
@@ -567,7 +579,7 @@ function renderHeader(round, isLive){
       '<div class="tabs">' + tabs + "</div>" +
       '<div class="kpis">' +
         '<div class="kpi" title="' + esc(totShown
-            ? "左栏各角色相加（in " + k1(t.in) + " / out " + k1(t.out) + "），数字是 agent 自己报的" +
+            ? "左栏各角色头号数相加（口径同角色卡;其中 in " + k1(t.in) + " / out " + k1(t.out) + "），数字是 agent 自己报的" +
               (gap ? "。CLI 收尾另报了 " + k1(gap) + " 输出摊不到具体角色（thinking 不带归属信息），" +
                      "所以各角色的 out 是下界" : "")
              : "还没有任何角色报出用量：角色可能还没真的干活，或这个宿主没有可读的子 agent 档案") + '">' +
@@ -604,14 +616,7 @@ function renderRanking(){
    *   两个方向都实测踩过:只显示 in+out(8k)被当成漏账;显示历次缓存读累计(14M)
    *   又被当成账炸了(「预计只有 1000k 上下」)—— Claude Code 给每个 agent 显示的
    *   是它当前的上下文规模,这里必须同一把尺。老事件没报 ctx 时才退回含缓存累计。 */
-  var tot0 = function(r){
-    if (r.ctxBy) {
-      var s = 0, k;
-      for (k in r.ctxBy) s += r.ctxBy[k];
-      if (s > 0) return s;
-    }
-    return r.inTok + r.outTok + (r.cacheRead || 0) + (r.cacheWrite || 0);
-  };
+  var tot0 = roleTot;   // 与页头总计同一把尺 —— 两处各算各的迟早再撞一次口径
   var max = Math.max.apply(null, rs.map(tot0).concat([1]));
   return rs.slice().sort(function(a,b){ return tot0(b) - tot0(a); }).map(function(r){
     var live = r.inTok + r.outTok;

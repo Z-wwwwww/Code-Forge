@@ -1812,8 +1812,10 @@ async function testChatUsage() {
 
   // ★ 网页排行与 TUI 同口径:条长/排序/头号数字都含缓存,分段=真进出/缓存
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
-  assert.ok(/r\.inTok \+ r\.outTok \+ \(r\.cacheRead \|\| 0\) \+ \(r\.cacheWrite \|\| 0\)/.test(html),
-    "★ 网页排行的总数要含缓存(Claude Code 同口径),不然网页 8k、协调者屏上 300k+,像账错了");
+  assert.ok(/function roleTot\(r\)/.test(html) && /ctxBy/.test(html),
+    "★ 网页角色总数走 roleTot:优先末次上下文(Claude Code 同口径),老事件退回含缓存累计");
+  assert.ok(/roleTot\(r\)/.test(html) && /tot0 = roleTot/.test(html),
+    "★ 页头总计与左栏角色卡必须共用 roleTot —— 各算各的迟早再撞一次口径(实测 31.2k vs 10.65M 同屏)");
   // ★ 网页的 k1 要有 M 档(tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
   //   实测「13980.0k」被当成数字算错了报 bug,其实只是格式化只认 k
   assert.ok(/function k1\(n\)\{[^\n]*1e6[^\n]*M/.test(html),
