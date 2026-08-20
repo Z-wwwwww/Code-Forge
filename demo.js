@@ -3,7 +3,7 @@
  * 示例回环:修复支付回调幂等性缺陷,3 轮对抗(第 3 轮进行中)。
  *
  * ★ 阵容必须是**现在这个产品真实的样子**(实测被问「demo 里怎么还有协调者」):
- *   - 3 个模型角色:提议者(propose) / 反驳者(attack) / 复核者(audit) —— 即
+ *   - 3 个模型角色:实现者(propose) / 反驳者(attack) / 复核者(audit) —— 即
  *     forge-proposer / forge-critic / forge-reviewer 三个子 agent;
  *   - +1 个非模型角色:判据(gate,代码跑命令,零 token);
  *   - **没有「协调者」这个角色** —— 协调者是宿主会话本身,不进角色表,
@@ -17,7 +17,7 @@
  */
 
 const ROLES = [
-  { id: "r1", name: "提议者", model: "claude-sonnet-5", color: "#6FD3C7", kind: "propose",
+  { id: "r1", name: "实现者", model: "claude-sonnet-5", color: "#6FD3C7", kind: "propose",
     duty: "修复反驳者挖出的问题,最小侵入落地" },
   { id: "r2", name: "反驳者", model: "claude-opus-5", color: "#E2707A", kind: "attack",
     duty: "只读挖掘:找反例、边界、触发路径" },
@@ -62,7 +62,7 @@ const ROUNDS = [
     ],
     events: [
       { role: "r1", kind: "route", ts: "14:02:11", dur: "0.3s", tok: "0.9k / 0.2k",
-        summary: "已派出提议者（sonnet），开始读仓库定位重复入账根因",
+        summary: "已派出实现者（sonnet），开始读仓库定位重复入账根因",
         body: "任务：payments/webhook 重复回调导致重复入账。判据：pytest -q tests/webhook。\n预算：8 轮 / 3600s / 零进展 2 轮停。" },
       { role: "r1", kind: "propose", ts: "14:02:58", dur: "11.2s", tok: "6.4k / 3.1k",
         summary: "方案：provider_event_id 唯一索引 + 事务内幂等写",
@@ -107,7 +107,7 @@ const ROUNDS = [
     ],
     events: [
       { role: "r1", kind: "route", ts: "14:08:20", dur: "0.3s", tok: "0.8k / 0.2k",
-        summary: "已派出提议者（sonnet），修复上一轮挖出的 3 条" },
+        summary: "已派出实现者（sonnet），修复上一轮挖出的 3 条" },
       { role: "r1", kind: "patch", ts: "14:10:05", dur: "22.1s", tok: "6.9k / 4.1k",
         summary: "认领与入账合并进单事务，冲突行加 FOR UPDATE SKIP LOCKED",
         body: "接受事务边界的批评。单库场景用行锁即可,不引入分布式锁。",
@@ -139,7 +139,7 @@ const ROUNDS = [
     ],
     events: [
       { role: "r1", kind: "route", ts: "14:16:02", dur: "0.3s", tok: "0.7k / 0.2k",
-        summary: "已派出提议者（sonnet），显式化 Claim 三态并处理 CONTENDED" },
+        summary: "已派出实现者（sonnet），显式化 Claim 三态并处理 CONTENDED" },
       { role: "r1", kind: "patch", ts: "14:18:40", dur: "16.3s", tok: "6.1k / 4.4k",
         summary: "Claim 枚举 FIRST/DUPLICATE/CONTENDED；CONTENDED → 200 + settle_retry 队列",
         diff: { file: "payments/webhook/idempotency.py", add: 11, del: 6, lines: d([
@@ -193,11 +193,11 @@ function events() {
    * ctx 是**末次上下文快照**取最新不累加 —— 预览不覆盖这个形状,改用量 UI 就得跑真回环。
    * 反驳者给两个 agent:排行合并、逐 agent 的轮内账分开,这两条都能在预览里看到。 */
   [
-    { agent: "agent-demo-p1", role: "提议者", type: "forge-proposer", model: "claude-sonnet-5",
+    { agent: "agent-demo-p1", role: "实现者", type: "forge-proposer", model: "claude-sonnet-5",
       round: 1, in: 34, out: 8900, cr: 820000, cw: 41000, ctx: 96000, msgs: 9, tools: { Read: 9, Edit: 6, Bash: 3 } },
     { agent: "agent-demo-c1", role: "反驳者", type: "forge-critic", model: "claude-opus-5",
       round: 1, in: 21, out: 4200, cr: 1140000, cw: 52000, ctx: 118000, msgs: 8, tools: { Read: 14, Grep: 6 } },
-    { agent: "agent-demo-p2", role: "提议者", type: "forge-proposer", model: "claude-sonnet-5",
+    { agent: "agent-demo-p2", role: "实现者", type: "forge-proposer", model: "claude-sonnet-5",
       round: 2, in: 18, out: 4100, cr: 640000, cw: 27000, ctx: 88000, msgs: 6, tools: { Read: 5, Edit: 4, Bash: 2 } },
     { agent: "agent-demo-c2", role: "反驳者", type: "forge-critic", model: "claude-opus-5",
       round: 2, in: 8, out: 3600, cr: 430000, cw: 18000, ctx: 64000, msgs: 5, tools: { Read: 8, Grep: 3 } }
@@ -208,7 +208,7 @@ function events() {
   });
   // 静默看门狗的心跳(hostrun 同款):进行中的轮里「谁在干活」要看得见
   out.push({ t: "run.streaming", role: "gate",
-    text: "第 3 轮 · 距上一条发言已 96s（上一条:提议者「Claim 枚举…」，反驳者多半在复检）" });
+    text: "第 3 轮 · 距上一条发言已 96s（上一条:实现者「Claim 枚举…」，反驳者多半在复检）" });
   return out;
 }
 

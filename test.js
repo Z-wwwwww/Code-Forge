@@ -27,7 +27,7 @@ function collect() {
   };
 }
 const ROLES = [
-  { name: "提议者", kind: "propose", provider: "mock", model: "mock" },
+  { name: "实现者", kind: "propose", provider: "mock", model: "mock" },
   { name: "反驳者", kind: "attack", provider: "mock", model: "mock" },
   { name: "复核者", kind: "audit", provider: "mock", model: "mock", trigger: "on_green" }
 ];
@@ -247,7 +247,7 @@ function testHttp() {
       try {
         const cfg = {
           session: "HTTP 测试",
-          roles: [{ name: "提议者", kind: "propose", provider: "mock", model: "mock" }],
+          roles: [{ name: "实现者", kind: "propose", provider: "mock", model: "mock" }],
           goal: { command: process.execPath + " -e \"process.exit(1)\"" },
           budget: { tokens: 500000, seconds: 600, rounds: 40, noProgressRounds: 99 }
         };

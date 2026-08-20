@@ -4,7 +4,7 @@
  *
  * ## 为什么要这一层
  *
- * 硬要求是「**每个角色必须有自己的会话**」。一个会话里先当提议者再当反驳者,等于让它
+ * 硬要求是「**每个角色必须有自己的会话**」。一个会话里先当实现者再当反驳者,等于让它
  * 复核自己刚说过的话 —— 反驳强度必然偏软,而这正是整个项目想防的东西。
  *
  * 能派子 agent 的宿主天然满足:子 agent 各有独立上下文、各绑模型。这一层是另一条路 ——
@@ -62,8 +62,8 @@ const usage = require("./usage.js");
  * 名字认下面这些别名以定 kind;认不出的按 propose 处理(原名留着当显示名)。
  */
 const ALIASES = {
-  proposer: { name: "提议者", kind: "propose" },
-  "提议者": { name: "提议者", kind: "propose" },
+  proposer: { name: "实现者", kind: "propose" },
+  "实现者": { name: "实现者", kind: "propose" },
   critic: { name: "反驳者", kind: "attack" },
   "反驳者": { name: "反驳者", kind: "attack" },
   reviewer: { name: "复核者", kind: "audit", trigger: "on_green" },
@@ -96,7 +96,7 @@ function parseRoleSpec(spec) {
 
 /**
  * 补全角色:定 kind → 定宿主 → **自动分模型** → 定权限档。
- * 每个角色可以指到**不同的宿主** —— claude 演提议者、codex 演反驳者是合法配置。
+ * 每个角色可以指到**不同的宿主** —— claude 演实现者、codex 演反驳者是合法配置。
  */
 function resolveRoles(roles, opts) {
   opts = opts || {};
@@ -151,7 +151,7 @@ function rolePrompt(ctx) {
   L.push("");
   L.push("你这一轮要做的：" + (r.duty || DUTY[r.kind] || DUTY.propose));
 
-  // 上一轮为什么没过 —— 没有这一段,提议者只会重复上一轮的改法
+  // 上一轮为什么没过 —— 没有这一段,实现者只会重复上一轮的改法
   if (ctx.lastGate) {
     L.push("");
     L.push("【上一轮判据结果】" + (ctx.lastGate.detail || ""));
@@ -162,13 +162,13 @@ function rolePrompt(ctx) {
       L.push("```");
     }
   }
-  // 本轮已发言的角色 —— 反驳者要看到提议者刚做了什么,否则它在反驳空气
+  // 本轮已发言的角色 —— 反驳者要看到实现者刚做了什么,否则它在反驳空气
   (ctx.said || []).forEach(function (s) {
     L.push("");
     L.push("【本轮 " + s.role + " 说】" + s.summary);
     if (s.body) L.push(String(s.body).slice(0, 2000));
   });
-  // 上一轮反驳者提过什么 —— 提议者这一轮该正面回应
+  // 上一轮反驳者提过什么 —— 实现者这一轮该正面回应
   if (ctx.lastAttacks && ctx.lastAttacks.length) {
     L.push("");
     L.push("【上一轮反驳者提过的问题（这一轮要正面回应）】");

@@ -124,10 +124,10 @@ const TOOLS = [
               }
             },
             // metric.source==="say":判据是**停止条件**,不必是可执行命令。
-            // 值由反驳者/复核者每轮 loop_say 带 value 上报(提议者报的不算,它有动机报 0)。
+            // 值由反驳者/复核者每轮 loop_say 带 value 上报(实现者报的不算,它有动机报 0)。
             // 例:「修 bug 直到连续 3 轮挖不出新 bug」= metric:{name:"新bug数",source:"say",max:0} + streak:3
             // metric.source==="say":判据是**停止条件**,不必是可执行命令。
-            // 值由反驳者/复核者每轮 loop_say 带 value 上报(提议者报的不算,它有动机报 0)。
+            // 值由反驳者/复核者每轮 loop_say 带 value 上报(实现者报的不算,它有动机报 0)。
             // 例:「修 bug 直到连续 3 轮挖不出新 bug」= metric:{name:"新bug数",source:"say",max:0} + streak:3
             streak: {
               type: "number",
@@ -157,7 +157,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              name: { type: "string", description: "角色名,如 提议者 / 反驳者 / 安全审查" },
+              name: { type: "string", description: "角色名,如 实现者 / 反驳者 / 安全审查" },
               duty: { type: "string", description: "它这一档负责什么" },
               kind: { type: "string", enum: ["propose", "attack", "defend", "verdict", "patch", "test", "audit", "route"],
                 description: "档位,决定页面上的配色与标签" }
@@ -182,10 +182,10 @@ const TOOLS = [
       properties: {
         role: { type: "string", description: "角色 id 或名字,必须是 loop_begin 里登记过的" },
         value: { type: "number",
-          description: "本轮量出来的数(如挖到的 bug 数)。判据是 metric.source:say 时必带 —— 只有反驳者/复核者报的算数,提议者报的会被忽略(它有动机报 0)" },
+          description: "本轮量出来的数(如挖到的 bug 数)。判据是 metric.source:say 时必带 —— 只有反驳者/复核者报的算数,实现者报的会被忽略(它有动机报 0)" },
         value: { type: "number",
           description: "本轮量出来的数(如挖到的 bug 数)。判据是 metric.source:\"say\" 时必带 ——" +
-            "只有反驳者/复核者报的算数,提议者报的会被忽略(它有动机报 0)" },
+            "只有反驳者/复核者报的算数,实现者报的会被忽略(它有动机报 0)" },
         summary: { type: "string", description: "一句话结论(页面折叠行显示这句)" },
         body: { type: "string", description: "完整理由/内容" },
         kind: { type: "string", enum: ["propose", "attack", "defend", "verdict", "patch", "test", "audit", "route"] },
@@ -467,7 +467,7 @@ function createHandler(state) {
             指令: "出配置卡(AskUserQuestion,每题推荐排第一,用户一路回车=全默认)。题目按下面出,不许增删改序:",
             题1_判据: "带着目标看一眼仓库给 2~4 条候选命令(只提议真实存在的;与目标相关的排前面)。" +
               "没有命令能判的量给 metric.source:\"say\"(角色上报,如「挖到的 bug 数」);完全不可量化才用 rubric。",
-            题2_模型: "推荐分配 (Recommended,写明 提议者X·反驳者Y·复核者Z) / 全用最强 / 全用最省 / 逐角色挑(选它再出一卡)",
+            题2_模型: "推荐分配 (Recommended,写明 实现者X·反驳者Y·复核者Z) / 全用最强 / 全用最省 / 逐角色挑(选它再出一卡)",
             题3_轮数: "8 (Recommended) / 不限(rounds:0) / 3(快速) —— Other 自填",
             题5_token预算: "不限 (Recommended) / 500k / 200k —— Other 自填。" +
               "只计量得到的部分(Claude Code 子 agent 的账我们读得到;协调者本人摊不出来)",
@@ -489,7 +489,7 @@ function createHandler(state) {
             gateOk ? null : "goal(command / metric.source:\"say\" / rubric 三选一)",
             typeof b.rounds === "number" ? null : "budget.rounds(0=不限)",
             typeof b.seconds === "number" && b.seconds > 0 ? null : "budget.seconds",
-            roles.length >= 2 ? null : "roles(至少提议者+反驳者)",
+            roles.length >= 2 ? null : "roles(至少实现者+反驳者)",
             roles.length >= 2 && roles.some(function (r) { return !r.model; })
               ? "roles[*].model(模型题的结果要落到每个角色上 —— 不落,观察面只能显示「宿主模型」占位)"
               : null

@@ -97,7 +97,7 @@ description: >
    例:「修掉查出的 bug,直到连续 3 轮 bug 数为 0」——
    `goal: { metric: {name:"新bug数", source:"say", max:0}, streak: 3 }` + `budget.rounds: 0`;
    每轮反驳者挖完 `loop_say({role:"反驳者", value: 挖到的数, ...})`。
-   **提议者报的 value 会被忽略** —— 它有动机报 0,数得由找茬的那方来报。
+   **实现者报的 value 会被忽略** —— 它有动机报 0,数得由找茬的那方来报。
 2. **预算** —— 几轮、多少秒。默认 8 轮 / 3600 秒 / 连续 2 轮无进展即停。
    用户没说就用默认,并在开跑时说一句你用了什么。
    用户说「不限轮数」「跑到干净为止」就给 `rounds: 0` —— 时限和零进展闸门仍然生效,
@@ -113,7 +113,7 @@ description: >
 
 ```
 题1「判据」   候选命令(推荐第一;组件自带 Other 自填)
-题2「模型」   选项: 推荐分配 (Recommended,label 里写明 提议者 X · 反驳者 Y · 复核者 Z)
+题2「模型」   选项: 推荐分配 (Recommended,label 里写明 实现者 X · 反驳者 Y · 复核者 Z)
               / 全用最强 / 全用最省 / 逐角色挑(选它就再出一卡,一角色一题)
 题3「轮数」   8 (Recommended) / 不限(rounds:0) / 3(快速) —— Other 自填具体数
 题4「时限」   3600s (Recommended) / 7200s —— 选了不限轮数时把更长的档位排前面
@@ -149,25 +149,25 @@ options: [
 
 | 角色 | 子 agent | 模型 | 工具 | kind |
 |---|---|---|---|---|
-| 提议者 | `forge-proposer` | `sonnet` | 读写 + Bash | `propose` |
+| 实现者 | `forge-proposer` | `sonnet` | 读写 + Bash | `propose` |
 | 反驳者 | `forge-critic` | `opus` | **只有 Read/Grep/Glob** | `attack` |
 | 复核者 | `forge-reviewer` | `sonnet` | 只读 | `audit` |
 
 **反驳者没有写权限,这是工具层面的硬约束,不是提示词里的请求。** 一个能顺手把问题抹平的反驳者
-等于没有反驳者;它的产物必须是「哪一行、什么触发路径」,由提议者去改。
+等于没有反驳者;它的产物必须是「哪一行、什么触发路径」,由实现者去改。
 
 **模型可以当场换**:表里那三个只是默认值(写在子 agent 定义的 frontmatter 里)。
-用户在聊天里点名 ——「反驳者用 opus」「提议者换 haiku 省点」—— 就在派发那次 Task/Agent
+用户在聊天里点名 ——「反驳者用 opus」「实现者换 haiku 省点」—— 就在派发那次 Task/Agent
 调用里用 `model` 参数覆盖,并在开跑小结里写清最终用了什么。
 用户说「我想挑挑模型」而没点名时,同样走选项点选(AskUserQuestion 一题一个角色,
-推荐排第一带理由 —— 反驳者最强、提议者紧跟、复核者最省),别让他打模型名。两条边界:
+推荐排第一带理由 —— 反驳者最强、实现者紧跟、复核者最省),别让他打模型名。两条边界:
 - 点的模型这个宿主没有(报错/起不来)就**如实说并保持默认**,不许静默换成别的;
 - 反驳者往弱了换要提醒一句「软反驳者等于没有反驳者」,用户坚持就照办。
 
 派发方式(Claude Code):用 Task/Agent 工具,`subagent_type` 填上面那三个名字。
-同一轮里提议者与反驳者若互不依赖,**放在同一条消息里并发派**,拿回结果后各自 `loop_say`。
+同一轮里实现者与反驳者若互不依赖,**放在同一条消息里并发派**,拿回结果后各自 `loop_say`。
 **有依赖就串行,别并发**:「挖 bug-修 bug」类回合的轮内顺序是死的 ——
-①提议者修上一轮挖出的问题 → ②反驳者重挖复检、`loop_say` 报数 → ③`loop_gate`。
+①实现者修上一轮挖出的问题 → ②反驳者重挖复检、`loop_say` 报数 → ③`loop_gate`。
 顺序反了会把还没修的又数一遍,白烧一轮。每派出一个角色先 `loop_say` 一条 route,
 修的步骤一开工就要报 —— 用户看到「挖出 bug 后长时间没动静」会以为卡死(实测问过)。
 需要更强的反驳时,可以同一轮派多个 `forge-critic`,给不同的攻击面(并发 / 边界 / 入口覆盖),
@@ -190,8 +190,8 @@ prompt 要自带全部上下文(它看不见你的对话);结果自动 loop_say,
 loop_begin({session, goal:{command, cwd, metric}, budget, roles})
   ↓  ← 自动弹一个终端窗口直播(没有终端模拟器才退回浏览器);把网址也告诉用户
 每一轮:
-  提议者做事 → loop_say({role:"提议者", summary, body, diff?})
-  反驳者做事 → loop_say({role:"反驳者", summary, body, targets:["提议者"]})
+  实现者做事 → loop_say({role:"实现者", summary, body, diff?})
+  反驳者做事 → loop_say({role:"反驳者", summary, body, targets:["实现者"]})
   (其它角色同理)
   loop_gate()
     ├ met:true            → 已自动收工。把结论和判据输出告诉用户。
@@ -202,7 +202,7 @@ loop_begin({session, goal:{command, cwd, metric}, budget, roles})
 要点:
 
 - **每个角色发言后立刻 `loop_say`**,别攒到最后一起报 —— 页面是给人实时看的,攒着就没意义了。
-- **派活之前也要报一声**:`loop_say({role:"提议者", kind:"route", summary:"已派出（sonnet），开始读仓库"})`。
+- **派活之前也要报一声**:`loop_say({role:"实现者", kind:"route", summary:"已派出（sonnet），开始读仓库"})`。
   一个子 agent 在真实目标上跑 5~15 分钟很正常 —— 这期间直播上一条事件都没有的话,
   用户只能猜「是模型慢还是挂了」(实测被问过)。派出去那一刻就是第一条事件。
 - `summary` 一句话结论(页面折叠行就显示这句),`body` 放完整理由。
@@ -212,7 +212,7 @@ loop_begin({session, goal:{command, cwd, metric}, budget, roles})
   存了档(`~/.claude/projects/…/subagents/`,带真模型与逐条 usage),监控台直接读那份。
   你手上确实拿得到数(结果里带用量)时可以顺手报进 `loop_say({tok:{in,out}})`;拿不到就别带,
   **绝不许估一个数**。
-- 能并行就并行:提议者和反驳者在同一轮里互不依赖时,可以并发派子任务,再各自 `loop_say`。
+- 能并行就并行:实现者和反驳者在同一轮里互不依赖时,可以并发派子任务,再各自 `loop_say`。
 - 不确定还能不能继续就 `loop_status`,别自己估。
 
 ## 三条纪律

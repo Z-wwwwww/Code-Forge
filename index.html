@@ -416,7 +416,7 @@ function applyEvent(ev){
         break;
       }
       // 按**名字**认回回环里那个角色。用 ev.agent(tool_use id)当 key 会多出一行同名的,
-      // 页面上就成了「提议者」和「提议者」两条账。
+      // 页面上就成了「实现者」和「实现者」两条账。
       var uid = null;
       for (var i = 0; i < STORE.roleOrder.length; i++) {
         if (STORE.roles[STORE.roleOrder[i]].name === ev.role) { uid = STORE.roleOrder[i]; break; }
@@ -453,7 +453,7 @@ function applyEvent(ev){
 function roleList(){ return STORE.roleOrder.map(function(id){ return STORE.roles[id]; }); }
 /* ★ 渲染期查询,**不许有副作用**。原来查不到就 ensureRole 注册 —— 任何一条 by/targets/
  * streaming.role 带了不认识的 id,角色表里就物化出一行「未发言 · —」的幽灵角色
- * (实测:demo 的 patch.by 写了名字而不是 id,左栏多出第二个「提议者」)。 */
+ * (实测:demo 的 patch.by 写了名字而不是 id,左栏多出第二个「实现者」)。 */
 function roleOf(id){
   return STORE.roles[id] ||
     { id:id, name:String(id), model:"—", color:"#8B95A2",

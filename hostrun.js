@@ -119,7 +119,7 @@ function create(append) {
         text: (st.turns === 0
           ? "开局 " + sec + "s 还没有任何角色发言 —— 执行者多半在读仓库/派活(大目标首轮 5~15 分钟正常)"
           : "第 " + st.round + " 轮 · 距上一条发言已 " + sec + "s" +
-            (st.lastSay ? "（上一条:" + st.lastSay.name + "「" + st.lastSay.summary + "」" + (st.lastSay.kind === "attack" ? "，多半在等提议者修" : "，角色多半还在干活") + "）"
+            (st.lastSay ? "（上一条:" + st.lastSay.name + "「" + st.lastSay.summary + "」" + (st.lastSay.kind === "attack" ? "，多半在等实现者修" : "，角色多半还在干活") + "）"
               : " —— 角色多半还在干活(子 agent 一跑几分钟正常)")) +
           (warned >= 3 ? "；一直这样就回执行者那头看看它是不是停了/在等审批" : "") });
     }, ms);
@@ -220,7 +220,7 @@ function create(append) {
     st.lastSayAt = Date.now();   // 看门狗的静默计时以它为基准
     // 看门狗要能说出「在等谁」:记下最后一个发言者和他说了什么
     st.lastSay = { name: known.name, kind: known.kind, summary: String(ev.summary || "").slice(0, 40) };
-    // 角色上报指标:只收**反驳者/复核者**带的 value —— 提议者有动机报 0(它想收工)。
+    // 角色上报指标:只收**反驳者/复核者**带的 value —— 实现者有动机报 0(它想收工)。
     // 同一轮报多次以最后一次为准(反驳者可能先报初步数、再报核完的数)。
     if (typeof ev.value === "number" && isFinite(ev.value) &&
         (known.kind === "attack" || known.kind === "audit" || known.kind === "verdict")) {
@@ -311,7 +311,7 @@ function create(append) {
       g = say.v == null
         ? { met: false, value: null, broken: false, ms: 0, fp: null, output: "",
             skipped: "本轮没人报 " + (m.name || "指标") +
-              " —— 反驳者/复核者 loop_say 要带 value(本轮量出来的数);提议者报的不算" }
+              " —— 反驳者/复核者 loop_say 要带 value(本轮量出来的数);实现者报的不算" }
         : { met: say.ok, value: say.v, broken: false, ms: 0,
             // 指纹用「轮次:值」—— 连续同值是这种判据的预期形态,零进展闸门另有 met 分支护着
             fp: null, output: "",
@@ -510,15 +510,15 @@ function create(append) {
       verdict.nextRound = st.round;
       verdict.instruction = (met
         ? "本轮判过,但判据要求**连续 " + need + " 轮**都过（现在 " + st.metStreak + "/" + need +
-          "）。还不算达标 —— 下一轮反驳者接着挖,提议者待命修;断一次就从头攒。开第 " + st.round + " 轮。"
+          "）。还不算达标 —— 下一轮反驳者接着挖,实现者待命修;断一次就从头攒。开第 " + st.round + " 轮。"
         : hasSay
           // 挖-修类的轮内顺序是死的:先修上一轮挖出的,再让反驳者重挖复检报数 ——
           // 顺序反了(先挖)会把还没修的又数一遍,白烧一轮
-          ? "未达标。第 " + st.round + " 轮按这个顺序走:①提议者先修上面报出的问题(一开工就 loop_say);" +
+          ? "未达标。第 " + st.round + " 轮按这个顺序走:①实现者先修上面报出的问题(一开工就 loop_say);" +
             "②反驳者重挖复检,把本轮还能挖到的数用 value 报上来;③loop_gate。别并发 —— 挖和修有依赖。"
           : "未达标。把判据输出里的失败信息带回给各角色,开第 " + st.round + " 轮。") +
         (st.idleRounds > 0
-          ? "⚠ 上一轮没有任何角色改过文件 —— 先确认提议者是不是权限不够、或者以为只要做分析。"
+          ? "⚠ 上一轮没有任何角色改过文件 —— 先确认实现者是不是权限不够、或者以为只要做分析。"
           : "");
     }
     return verdict;

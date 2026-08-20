@@ -11,7 +11,7 @@
  * 等于把那条拒绝拆了,剩下一个界面。
  *
  * 所以判定人是**独立评审者**:
- *   · 独立会话 —— 不看协调者/提议者的对话历史,只看目标、rubric、和代码
+ *   · 独立会话 —— 不看协调者/实现者的对话历史,只看目标、rubric、和代码
  *   · **只读**  —— 宿主级强制(codex `-s read-only` / claude 只放行 Read/Grep/Glob)。
  *                  一个能顺手改代码的评审者可以先改好再判过
  *   · 尽量不同模型 —— 同一个模型评自己写的东西,通过率虚高
@@ -106,7 +106,7 @@ function parseVerdict(text, context) {
 
 /**
  * 挑评审者用哪个宿主/模型。
- * **尽量避开提议者用的那个模型** —— 同一个模型评自己写的东西通过率虚高。
+ * **尽量避开实现者用的那个模型** —— 同一个模型评自己写的东西通过率虚高。
  */
 function pickReviewer(opts) {
   const want = opts.agent || null;
@@ -118,7 +118,7 @@ function pickReviewer(opts) {
   const avoid = new Set((opts.avoidModels || []).filter(Boolean));
   const list = (typeof ad.models === "function" ? ad.models() : [])
     .filter(function (m) { return !adapters.unusableModels(ad.id).has(m.id); });
-  // 最强的优先(评审要看得出问题),但避开提议者那个;都被避开就只能同一个 —— 如实标出来
+  // 最强的优先(评审要看得出问题),但避开实现者那个;都被避开就只能同一个 —— 如实标出来
   const ordered = list.filter(function (m) { return m.strong; })
     .concat(list.filter(function (m) { return !m.strong && !m.weak; }))
     .concat(list.filter(function (m) { return m.weak; }));

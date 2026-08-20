@@ -103,7 +103,7 @@ function createTracker(opts) {
    *
    * ★ 默认 "coordinator" 只在「一个进程跑完全程」时对。per-role 模式下每个角色各有
    *   一个 tracker,如果都用同一个键,`reduceEvents` 会按键归并 —— 三个角色的账合成
-   *   一条,表里只剩第一个角色(实测踩过:三份 usage 事件都在,表里只显示提议者)。
+   *   一条,表里只剩第一个角色(实测踩过:三份 usage 事件都在,表里只显示实现者)。
    *   所以 per-role 要把角色名当键传进来。
    */
   const soloKey = opts.soloKey || "coordinator";

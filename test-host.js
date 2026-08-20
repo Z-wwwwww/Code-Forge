@@ -19,7 +19,7 @@ function ok(n) { pass++; console.log("  ✓ " + n); }
 // model 必带:配置卡模型题的结果要落到每个角色上,向导校验会拦没带的(用户实测:
 // 不落的话观察面只能显示「宿主模型」占位,看起来就是「没有模型名字」)
 const ROLES = [
-  { name: "提议者", kind: "propose", duty: "提最小改动", model: "sonnet" },
+  { name: "实现者", kind: "propose", duty: "提最小改动", model: "sonnet" },
   { name: "反驳者", kind: "attack", duty: "只找反例", model: "opus" },
   { name: "复核者", kind: "audit", duty: "判绿后复核", model: "sonnet" }
 ];
@@ -41,7 +41,7 @@ async function testStateMachine() {
   };
 
   // say / gate 在 begin 之前必须拒
-  assert.ok(host.say({ role: "提议者", summary: "x" }).error);
+  assert.ok(host.say({ role: "实现者", summary: "x" }).error);
   assert.ok((await host.gate()).error);
   ok("没 begin 就 say/gate → 拒绝(不静默建一个隐形回环)");
 
@@ -70,7 +70,7 @@ async function testStateMachine() {
   assert.ok(host.say({ role: "不存在的人", summary: "x" }).error);
   ok("不在角色表里的 role → 拒绝");
 
-  const said = host.say({ role: "提议者", summary: "加唯一索引", body: "详细理由…" });
+  const said = host.say({ role: "实现者", summary: "加唯一索引", body: "详细理由…" });
   assert.strictEqual(said.recorded, true);
   const ev = events.filter(function (e) { return e.t === "event"; }).pop();
   assert.strictEqual(ev.role, "role1", "名字要归一成 id");
@@ -304,9 +304,9 @@ function testMcpEndToEnd() {
           assert.strictEqual(bad.isError, true);
           ok("loop_say 未登记角色 → isError,不静默吞掉");
 
-          const s1 = await callTool("loop_say", { role: "提议者", summary: "加唯一索引", body: "..." });
+          const s1 = await callTool("loop_say", { role: "实现者", summary: "加唯一索引", body: "..." });
           assert.strictEqual(s1.isError, false);
-          const s2 = await callTool("loop_say", { role: "反驳者", summary: "并发窗口仍在", targets: ["提议者"] });
+          const s2 = await callTool("loop_say", { role: "反驳者", summary: "并发窗口仍在", targets: ["实现者"] });
           assert.strictEqual(s2.isError, false);
           ok("两个角色各 loop_say 一次");
 
@@ -462,7 +462,7 @@ async function testPackaging() {
   const tui = require("./tui.js");
   const st = tui.newState();
   [{ t: "run.start", session: "S", mode: "host", goal: "G", budget: { rounds: 6 } },
-   { t: "role.add", id: "role1", name: "提议者", model: "sonnet" },
+   { t: "role.add", id: "role1", name: "实现者", model: "sonnet" },
    { t: "role.add", id: "gate", name: "判据", model: "确定性 · 无模型" },
    { t: "round.start", n: 1 },
    { t: "event", round: 1, role: "role1", kind: "propose", ts: "10:00:01", summary: "补用例" },
@@ -475,7 +475,7 @@ async function testPackaging() {
   const out = tui.render(st, 96);
   assert.ok(out.indexOf("R1 68") >= 0 && out.indexOf("R2 82") >= 0, "判据走势必须出现在画面上");
   assert.ok(out.indexOf("达标停止") >= 0, "停止原因要显示成人话");
-  assert.ok(out.indexOf("提议者") >= 0 && out.indexOf("判据") >= 0, "角色表要有名字");
+  assert.ok(out.indexOf("实现者") >= 0 && out.indexOf("判据") >= 0, "角色表要有名字");
   ok("TUI 渲染是纯函数：判据走势 / 停止原因 / 角色表都在");
 
   // 一条 gate 事件都没有时不许画一排「—」——那会被读成「量过了,没有数」
@@ -494,7 +494,7 @@ async function testPackaging() {
     const many = tui.newState();
     [
       { t: "run.start", session: "S", mode: "host", goal: "G", budget: { rounds: 6 } },
-      { t: "role.add", id: "r1", name: "提议者", model: "sonnet" },
+      { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
       { t: "role.add", id: "gate", name: "判据", model: "确定性" },
       { t: "round.start", n: 1 },
       { t: "event", round: 1, role: "r1", kind: "propose", ts: "10:00:01", summary: "第一轮的提案内容" },
@@ -592,7 +592,7 @@ async function testPackaging() {
     h.begin({ session: "s", task: "修到连续 3 轮干净",
       goal: { command: "node -e process.exit(0)", cwd: process.cwd(), streak: 3 },
       budget: { rounds: 0, seconds: 600, noProgressRounds: 2 },
-      roles: [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
+      roles: [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
       quietWarnMs: 999999 });
     h.say({ role: "反驳者", summary: "没挖到", body: "" });
     const v1 = await h.gate();
@@ -629,14 +629,14 @@ async function testPackaging() {
       goal: { command: "node -e \"process.exit(require('fs').existsSync(String.raw`" + flag + "`)?0:1)\"",
         cwd: process.cwd(), streak: 2 },
       budget: { rounds: 10, seconds: 600, noProgressRounds: 5 },
-      roles: [{ name: "提议者", kind: "propose" }], quietWarnMs: 999999 });
-    h2.say({ role: "提议者", summary: "x", body: "" });
+      roles: [{ name: "实现者", kind: "propose" }], quietWarnMs: 999999 });
+    h2.say({ role: "实现者", summary: "x", body: "" });
     const w1 = await h2.gate();
     fs.unlinkSync(flag);
-    h2.say({ role: "提议者", summary: "x", body: "" });
+    h2.say({ role: "实现者", summary: "x", body: "" });
     const w2 = await h2.gate();
     fs.writeFileSync(flag, "1");
-    h2.say({ role: "提议者", summary: "x", body: "" });
+    h2.say({ role: "实现者", summary: "x", body: "" });
     const w3 = await h2.gate();
     assert.strictEqual(w1.streak.have, 1);
     assert.strictEqual(w3.streak.have, 1, "★ 断一次必须从头攒 —— 「连续」是判据的一部分,不是修辞");
@@ -649,9 +649,9 @@ async function testPackaging() {
     h3.begin({ session: "s3", task: "t",
       goal: { command: "node -e process.exit(1)", cwd: process.cwd() },
       budget: { rounds: 0, seconds: 600, noProgressRounds: 99 },
-      roles: [{ name: "提议者", kind: "propose" }], quietWarnMs: 999999 });
+      roles: [{ name: "实现者", kind: "propose" }], quietWarnMs: 999999 });
     for (let i = 0; i < 5; i++) {
-      h3.say({ role: "提议者", summary: "改 " + i, body: "" });
+      h3.say({ role: "实现者", summary: "改 " + i, body: "" });
       const w = await h3.gate();
       assert.notStrictEqual(w.stopReason, "budget_rounds", "不限轮不许因轮数停");
     }
@@ -675,18 +675,18 @@ async function testPackaging() {
     h.begin({ session: "挖bug", task: "连续3轮0bug停",
       goal: { cwd: process.cwd(), metric: { name: "新bug数", source: "say", max: 0 }, streak: 3 },
       budget: { rounds: 0, seconds: 600, noProgressRounds: 9 },
-      roles: [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
+      roles: [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
       quietWarnMs: 999999 });
     h.say({ role: "反驳者", summary: "挖到2个", body: "", value: 2 });
     const v1 = await h.gate();
     assert.strictEqual(v1.roundMet, false);
     assert.ok(/新bug数 = 2/.test(v1.detail) && /反驳者/.test(v1.detail),
       "裁决要写清:值是谁报的、比的什么区间");
-    // ★ 提议者报 0 不算数 —— 它有动机报 0。没有合法上报 = 判不了,不是达标
-    h.say({ role: "提议者", summary: "我修完了,0个!", body: "", value: 0 });
+    // ★ 实现者报 0 不算数 —— 它有动机报 0。没有合法上报 = 判不了,不是达标
+    h.say({ role: "实现者", summary: "我修完了,0个!", body: "", value: 0 });
     const v2 = await h.gate();
-    assert.strictEqual(v2.roundMet, false, "★ 提议者自报 0 不许当达标");
-    assert.ok(/没人报/.test(v2.detail) && /提议者报的不算/.test(v2.detail),
+    assert.strictEqual(v2.roundMet, false, "★ 实现者自报 0 不许当达标");
+    assert.ok(/没人报/.test(v2.detail) && /实现者报的不算/.test(v2.detail),
       "要说清:数得由找茬的那方报");
     // 连续 3 轮反驳者报 0 → reported_met(单列,不冒充命令判过)
     for (let i = 0; i < 3; i++) {
@@ -714,7 +714,7 @@ async function testPackaging() {
     const skS2 = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
     assert.ok(/停止需要达到的条件/.test(skS2) && /source:"say"/.test(skS2),
       "技能要教:判据是停止条件,不必是命令;三种判据按可信度排");
-    ok("★ 角色上报指标判据：反驳者报数、提议者报 0 无效、连续 3 轮 0 → reported_met（单列）");
+    ok("★ 角色上报指标判据：反驳者报数、实现者报 0 无效、连续 3 轮 0 → reported_met（单列）");
   }
 
   // 非 TTY 时不许画屏:clear-screen 与 raw mode 在管道/CI 里只会产出垃圾
@@ -748,8 +748,8 @@ async function testPackaging() {
   });
   // 多模型的意义在于**真的不同**:三个都写 sonnet 就退回成自己跟自己唱反调
   assert.notStrictEqual(parsed["forge-critic"].model, parsed["forge-proposer"].model,
-    "反驳者与提议者必须跑在不同模型上");
-  ok("三个角色定义齐全,且反驳者与提议者不同模型");
+    "反驳者与实现者必须跑在不同模型上");
+  ok("三个角色定义齐全,且反驳者与实现者不同模型");
 
   // ★ 反驳者的写权限必须在**工具层面**就没有 —— 只写在提示词里挡不住顺手抹平
   ["Write", "Edit", "Bash", "NotebookEdit"].forEach(function (t) {
@@ -757,13 +757,13 @@ async function testPackaging() {
       "forge-critic 不许有 " + t + " 工具（能改文件的反驳者会顺手把问题抹平)");
     assert.ok(parsed["forge-reviewer"].tools.indexOf(t) < 0, "forge-reviewer 不许有 " + t);
   });
-  assert.ok(parsed["forge-proposer"].tools.indexOf("Edit") >= 0, "提议者得能改文件");
+  assert.ok(parsed["forge-proposer"].tools.indexOf("Edit") >= 0, "实现者得能改文件");
   ok("★ 反驳者/复核者工具层面就没有写权限（不是靠提示词请求）");
 
-  // 提议者那份必须明写红线:不许改判据来达标
+  // 实现者那份必须明写红线:不许改判据来达标
   assert.ok(/不许为了让判据变绿去改判据|不许.*改判据/.test(parsed["forge-proposer"].body),
-    "提议者定义里必须明写不许改判据");
-  ok("提议者定义里明写「不许改判据来达标」这条红线");
+    "实现者定义里必须明写不许改判据");
+  ok("实现者定义里明写「不许改判据来达标」这条红线");
 
   // 技能里要把派发方式和模型表写清,否则装了角色也不会被用
   const skillSrc = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
@@ -956,7 +956,7 @@ async function testPackaging() {
     const evs = [];
     const h = require("./hostrun.js").create(function (e) { evs.push(e); });
     h.begin({ session: "s", task: "t", goal: { command: "node -e 0", cwd: process.cwd() },
-      budget: { rounds: 5, seconds: 600 }, roles: [{ name: "提议者", kind: "propose" }],
+      budget: { rounds: 5, seconds: 600 }, roles: [{ name: "实现者", kind: "propose" }],
       quietWarnMs: 60 });
     await new Promise(function (r) { setTimeout(r, 200); });
     const warns = function () {
@@ -968,7 +968,7 @@ async function testPackaging() {
     assert.ok(/5~15 分钟正常/.test(evs.filter(function (e) {
       return e.t === "run.streaming"; })[0].text),
       "要说清这多半是正常的 —— 不然一句裸警告只会让人更慌");
-    h.say({ role: "提议者", summary: "开工", body: "" });
+    h.say({ role: "实现者", summary: "开工", body: "" });
     const n0 = warns();
     await new Promise(function (r) { setTimeout(r, 200); });
     assert.strictEqual(warns(), n0, "★ 第一条 loop_say 之后看门狗必须闭嘴");
@@ -995,13 +995,13 @@ async function testPackaging() {
     const hw = require("./hostrun.js").create(function (e) { evsW.push(e); });
     hw.begin({ session: "s", task: "t", goal: { command: "node -e process.exit(1)", cwd: process.cwd() },
       budget: { rounds: 9, seconds: 600, noProgressRounds: 9 },
-      roles: [{ name: "提议者", kind: "propose" }], quietWarnMs: 60 });
-    hw.say({ role: "提议者", summary: "开工", body: "" });
+      roles: [{ name: "实现者", kind: "propose" }], quietWarnMs: 60 });
+    hw.say({ role: "实现者", summary: "开工", body: "" });
     await new Promise(function (r) { setTimeout(r, 200); });
     assert.ok(evsW.some(function (e) { return e.t === "run.streaming" && /距上一条发言已/.test(e.text); }),
       "★ 发言之后的长静默也要有心跳 —— 角色一干活十几分钟,没心跳就是「像卡住了」");
     const n0 = evsW.filter(function (e) { return e.t === "run.streaming"; }).length;
-    hw.say({ role: "提议者", summary: "又来", body: "" });
+    hw.say({ role: "实现者", summary: "又来", body: "" });
     await new Promise(function (r) { setTimeout(r, 70); });
     assert.ok(evsW.filter(function (e) { return e.t === "run.streaming"; }).length - n0 <= 1,
       "新发言要重置静默计时,不许攒着旧警告继续报");
@@ -1175,7 +1175,7 @@ async function testPackaging() {
     const hT = require("./hostrun.js").create(function (e) { evsT.push(e); });
     hT.begin({ session: "s", task: "t", goal: { command: "node -e process.exit(1)", cwd: process.cwd() },
       budget: { rounds: 0, seconds: 600, noProgressRounds: 99, tokens: 100 },
-      roles: [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
+      roles: [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
       quietWarnMs: 999999 });
     const prT = require("./perrole.js");
     const realT = prT.runRole;
@@ -1206,7 +1206,7 @@ async function testPackaging() {
     const stT = tui.newState();
     [{ t: "run.start", session: "s", mode: "host", goal: "g",
        budget: { rounds: 0, seconds: 7200, tokens: 500000 } },
-     { t: "role.add", id: "r1", name: "提议者", model: "sonnet" },
+     { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
      { t: "role.add", id: "r2", name: "反驳者", model: "opus" },
      { t: "usage", role: "反驳者", agent: "反驳者", model: "claude-opus-5", round: 1,
        in: 33800, out: 4200, msgs: 3, tools: {}, source: "claude" }
@@ -1233,7 +1233,7 @@ async function testPackaging() {
   }
 
   /* ★ 轮内顺序与「在等谁」。用户实测困惑:「查出 bug 后长时间没进入修改步骤」——
-   *   其实提议者正在修(一改几分钟不发言),但心跳只报「距上一条发言 Ns」,没说在等谁;
+   *   其实实现者正在修(一改几分钟不发言),但心跳只报「距上一条发言 Ns」,没说在等谁;
    *   而挖-修类回合的轮内顺序(先修再复挖)也没写死,顺序反了会把没修的又数一遍。 */
   {
     const evsO = [];
@@ -1241,7 +1241,7 @@ async function testPackaging() {
     hO.begin({ session: "s", task: "修 bug",
       goal: { cwd: process.cwd(), metric: { name: "新bug数", source: "say", max: 0 }, streak: 3 },
       budget: { rounds: 0, seconds: 600, noProgressRounds: 99 },
-      roles: [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
+      roles: [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }],
       quietWarnMs: 60 });
     hO.say({ role: "反驳者", summary: "挖到 3 个:A/B/C", body: "", value: 3 });
     await new Promise(function (r) { setTimeout(r, 150); });
@@ -1249,15 +1249,15 @@ async function testPackaging() {
       return e.t === "run.streaming" && /距上一条发言/.test(e.text); }).pop();
     assert.ok(hb && /上一条:反驳者/.test(hb.text) && /挖到 3 个/.test(hb.text),
       "★ 心跳要说出上一条是谁说的 —— 「距上一条 Ns」不带主语等于没说");
-    assert.ok(/在等提议者修/.test(hb.text),
-      "★ 反驳者刚报完 → 心跳要点明「多半在等提议者修」,用户才知道静默是修不是卡");
+    assert.ok(/在等实现者修/.test(hb.text),
+      "★ 反驳者刚报完 → 心跳要点明「多半在等实现者修」,用户才知道静默是修不是卡");
     const v = await hO.gate();
-    assert.ok(/①提议者先修/.test(v.instruction) && /②反驳者重挖复检/.test(v.instruction),
+    assert.ok(/①实现者先修/.test(v.instruction) && /②反驳者重挖复检/.test(v.instruction),
       "★ 挖-修类未达标的 gate 指令要写死轮内顺序:先修再复挖 —— 反了会把没修的又数一遍");
     assert.ok(/别并发/.test(v.instruction), "并明说挖和修有依赖,别并发");
     hO.end("stopped", "t");
     const skO = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-    assert.ok(/有依赖就串行,别并发/.test(skO) && /①提议者修上一轮挖出的问题/.test(skO),
+    assert.ok(/有依赖就串行,别并发/.test(skO) && /①实现者修上一轮挖出的问题/.test(skO),
       "技能要写死挖-修类的轮内顺序(串行),并发只给互不依赖的角色");
     assert.ok(/修的步骤一开工就要报/.test(skO),
       "修的步骤开工要 loop_say —— 「挖出 bug 后长时间没动静」的困惑就是这么来的");
@@ -1273,7 +1273,7 @@ async function testPackaging() {
     const evsA = [];
     const hA = require("./hostrun.js").create(function (e) { evsA.push(e); });
     hA.begin({ session: "s", task: "t", goal: { command: "node -e process.exit(1)", cwd: process.cwd() },
-      budget: { rounds: 3, seconds: 60 }, roles: [{ name: "提议者", kind: "propose" },
+      budget: { rounds: 3, seconds: 60 }, roles: [{ name: "实现者", kind: "propose" },
         { name: "反驳者", kind: "attack" }], quietWarnMs: 999999 });
     const prA = require("./perrole.js");
     const realA = prA.runRole;
@@ -1311,7 +1311,7 @@ async function testPackaging() {
     const evsRP = [];
     const stRP = tui.newState();
     [{ t: "run.start", session: "s", mode: "host", goal: "g", budget: { rounds: 3, seconds: 60 } },
-     { t: "role.add", id: "r1", name: "提议者", model: "sonnet" },
+     { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
      { t: "role.add", id: "r2", name: "反驳者", model: "opus" },
      { t: "round.start", n: 1 },
      { t: "event", round: 1, role: "r1", kind: "propose", ts: "10:00:01", summary: "改",
@@ -1338,16 +1338,16 @@ async function testPackaging() {
     // ★ 展开的进行中轮要在聊天记录末尾挂实时活动行 —— 不用低头去底栏找「谁在干什么」
     const stLive = tui.newState();
     [{ t: "run.start", session: "s", mode: "host", budget: { rounds: 3, seconds: 60 } },
-     { t: "role.add", id: "r1", name: "提议者", model: "sonnet" },
+     { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
      { t: "round.start", n: 1 },
-     { t: "run.streaming", role: "r1", text: "提议者 · → Edit x.py" }
+     { t: "run.streaming", role: "r1", text: "实现者 · → Edit x.py" }
     ].forEach(function (e) { tui.reduce(stLive, e); });
     const liveLines = tui.renderLines(stLive, 100, { spinFrame: "⠼" })
       .filter(function (l) { return l.pulseCol; });
     assert.strictEqual(liveLines.length, 1, "★ 进行中的轮要有带脉搏的实时活动行");
     const liveTxt = liveLines[0].text.replace(/\[[0-9;]*m/g, "");
     // ★ 左侧要有角色名(着色、│ 分隔),名字不重复 —— 「谁在动」不能让人从文本里猜(用户点名过)
-    assert.ok(/提议者 │ → Edit x\.py/.test(liveTxt), "活动行 = 角色名 │ 动作,名字不重复");
+    assert.ok(/实现者 │ → Edit x\.py/.test(liveTxt), "活动行 = 角色名 │ 动作,名字不重复");
     assert.ok(liveLines[0].inRound === 1 && !liveLines[0].round,
       "★ 活动行是聊天内容(inRound) —— 点它不许折叠这一轮(只有标题行可点)");
     // 展开轮的每一条聊天记录都不许可点:round 只留给标题行,hit 对照表只认 round
@@ -1366,7 +1366,7 @@ async function testPackaging() {
   {
     const stEV = tui.newState();
     [{ t: "run.start", session: "s", mode: "host", budget: { rounds: 3, seconds: 60 } },
-     { t: "role.add", id: "r1", name: "提议者", model: "sonnet" },
+     { t: "role.add", id: "r1", name: "实现者", model: "sonnet" },
      { t: "round.start", n: 1 },
      { t: "event", round: 1, role: "r1", kind: "patch", ts: "10:00:01", summary: "合并事务",
        body: "把 claim 与入账合并进单事务。",
@@ -1415,7 +1415,7 @@ async function testPackaging() {
     const fA = path.join(os.tmpdir(), "cf-anchor-" + process.pid + ".jsonl");
     const evA = [JSON.stringify({ t: "run.start", session: "s", mode: "host",
       budget: { rounds: 3, seconds: 600 } }),
-      JSON.stringify({ t: "role.add", id: "r1", name: "提议者", model: "sonnet" }),
+      JSON.stringify({ t: "role.add", id: "r1", name: "实现者", model: "sonnet" }),
       JSON.stringify({ t: "round.start", n: 1 })];
     for (let i = 1; i <= 20; i++) {
       evA.push(JSON.stringify({ t: "event", round: 1, role: "r1", kind: "patch",
@@ -1568,9 +1568,9 @@ async function testPackaging() {
       const h = require("./hostrun.js").create(function (e) { evs.push(e); });
       h.begin({ session: "s", task: "修重复回调", goal: { command: "node -e 0", cwd: process.cwd() },
         budget: { rounds: 5, seconds: 600 },
-        roles: [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }] });
+        roles: [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }] });
 
-      const r = await h.dispatch({ role: "反驳者", prompt: "上一轮提议者改了 X，找反例" });
+      const r = await h.dispatch({ role: "反驳者", prompt: "上一轮实现者改了 X，找反例" });
       assert.strictEqual(r.said, true, "结果要自动 loop_say —— 留痕不该依赖调用方记得再报");
       assert.ok(/反例/.test(r.text), "text 要原样带回");
       // ★ 红线在服务端拼,不信调用方会带
@@ -1682,7 +1682,7 @@ async function testPackaging() {
 async function testChatUsage() {
   console.log("\n【聊天路径的真模型与真用量】");
   const cu = require("./chatusage.js");
-  const roles = [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" }];
+  const roles = [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" }];
 
   assert.strictEqual(cu.slugFor("C:\\Projects_GitHub_my\\code-forge"),
     "C--Projects-GitHub-my-code-forge",
@@ -1832,10 +1832,10 @@ async function testChatUsage() {
   assert.ok(new Set(demoCritics.map(function (e) { return e.agent; })).size >= 2,
     "★ 示例里同名角色要有两个 agent —— 排行合并、轮内账分开这两条预览里才看得见");
   /* ★ 示例阵容必须是产品**现在**的样子(实测被问「demo 里怎么还有协调者」):
-   *   提议者/反驳者/复核者 + 判据,没有协调者(它是宿主本身,不进角色表)。 */
+   *   实现者/反驳者/复核者 + 判据,没有协调者(它是宿主本身,不进角色表)。 */
   const demoRoles = demoEvs.filter(function (e) { return e.t === "role.add"; })
     .map(function (e) { return e.name; });
-  assert.deepStrictEqual(demoRoles, ["提议者", "反驳者", "复核者", "判据"],
+  assert.deepStrictEqual(demoRoles, ["实现者", "反驳者", "复核者", "判据"],
     "★ 示例角色 = 现役阵容(3 角色+判据),不许再出现协调者/裁判那套老剧本");
   assert.ok(demoEvs.some(function (e) { return e.role === "gate" && e.meta && e.meta.met === false; }),
     "★ 示例要有判据事件(meta.met) —— 判据走势区不覆盖,改它还得跑真回环");
@@ -1854,7 +1854,7 @@ async function testUsage() {
   // 用例喂的是**宿主的原始输出**,经适配器解析后进记账 —— 这样测的是真实那条路,
   // 而不是我们自己造的中间形状(中间形状对了、解析错了,照样一条都发现不了)
   const roleOf = usage.roleResolver([
-    { name: "提议者", subagent: "forge-proposer" },
+    { name: "实现者", subagent: "forge-proposer" },
     { name: "反驳者·并发", subagent: "forge-critic" },
     { name: "反驳者·覆盖", subagent: "forge-critic" }
   ]);
@@ -1880,7 +1880,7 @@ async function testUsage() {
     id: "m1", model: "opus", usage: { input_tokens: 10, output_tokens: 5 },
     content: [
       { type: "tool_use", id: "tu_1", name: "Task",
-        input: { subagent_type: "forge-proposer", description: "提议者：动手改" } },
+        input: { subagent_type: "forge-proposer", description: "实现者：动手改" } },
       { type: "tool_use", id: "tu_2", name: "Task",
         input: { subagent_type: "forge-critic", description: "反驳者·并发：只查并发" } },
       { type: "tool_use", id: "tu_3", name: "Task",
@@ -1897,8 +1897,8 @@ async function testUsage() {
   const byRole = {};
   red.agents.forEach(function (a) { byRole[a.role] = a; });
   assert.strictEqual(byRole["协调者"].in, 10, "协调者只认自己那份");
-  assert.strictEqual(byRole["提议者"].in, 900);
-  assert.strictEqual(byRole["提议者"].tools.Edit, 1);
+  assert.strictEqual(byRole["实现者"].in, 900);
+  assert.strictEqual(byRole["实现者"].tools.Edit, 1);
   // 同一个 subagent 派出两个角色 —— 只有 Task 描述能把它们分开
   assert.strictEqual(byRole["反驳者·并发"].in, 700);
   assert.strictEqual(byRole["反驳者·覆盖"].in, 600);
@@ -1912,11 +1912,11 @@ async function testUsage() {
   t.ingestRaw(A.claude, { type: "assistant", parent_tool_use_id: null, message: {
     id: "n1", model: "opus", usage: { input_tokens: 1, output_tokens: 1 },
     content: [{ type: "tool_use", id: "tu_9", name: "Agent",
-      input: { subagent_type: "forge-proposer", description: "提议者：动手" } }] } }, 1);
+      input: { subagent_type: "forge-proposer", description: "实现者：动手" } }] } }, 1);
   t.ingestRaw(A.claude, { type: "assistant", parent_tool_use_id: "tu_9", message: {
     id: "n2", model: "sonnet", usage: { input_tokens: 42, output_tokens: 7 }, content: [] } }, 1);
   const named = usage.reduceEvents(t.flush()).agents
-    .filter(function (a) { return a.role === "提议者"; })[0];
+    .filter(function (a) { return a.role === "实现者"; })[0];
   assert.ok(named, "工具叫 Agent 时也要认出子 agent（按 subagent_type，不按工具名）");
   assert.strictEqual(named.in, 42);
   // 注释里可以提这段历史,但**代码里**不许再按工具名认 —— 先把注释行剥掉再查。
@@ -2019,7 +2019,7 @@ async function testUsage() {
   ok("网页/TUI/usage 子命令共用同一套汇总语义");
 
   // ⑦ 真的把监控台那段 reducer 跑一遍。上面第⑥条只查了字面,而这里要钉的是**行为**:
-  //    用量必须并进已有的那一行角色。多出一行同名的「提议者」,页面上是两条账,
+  //    用量必须并进已有的那一行角色。多出一行同名的「实现者」,页面上是两条账,
   //    看起来还都合法 —— 这种错光看代码看不出来。
   const scriptSrc = /<script[^>]*>([\s\S]*?)<\/script>/.exec(html)[1];
   const grab = function (re) {
@@ -2041,15 +2041,15 @@ async function testUsage() {
   const page = new Function(harness)();
   [
     { t: "run.start", session: "X" },
-    { t: "role.add", id: "role1", name: "提议者", model: "sonnet" },
+    { t: "role.add", id: "role1", name: "实现者", model: "sonnet" },
     { t: "round.start", n: 1 },
-    { t: "usage", round: 1, role: "提议者", agent: "tu_1", model: "claude-sonnet-4-5",
+    { t: "usage", round: 1, role: "实现者", agent: "tu_1", model: "claude-sonnet-4-5",
       in: 8000, out: 1200, cacheRead: 45000, tools: { Edit: 4 } },
-    { t: "usage", round: 1, role: "提议者", agent: "tu_1", in: 500, out: 100, tools: { Edit: 1 } },
+    { t: "usage", round: 1, role: "实现者", agent: "tu_1", in: 500, out: 100, tools: { Edit: 1 } },
     { t: "usage", round: 1, role: "协调者", agent: "coordinator", in: 1200, out: 340, tools: { Task: 3 } },
     { t: "usage", total: true, costUsd: 0.42 }
   ].forEach(page.applyEvent);
-  assert.strictEqual(page.STORE.roleOrder.length, 2, "提议者不能多出一行同名的（应为 提议者 + 协调者）");
+  assert.strictEqual(page.STORE.roleOrder.length, 2, "实现者不能多出一行同名的（应为 实现者 + 协调者）");
   assert.strictEqual(page.STORE.roles.role1.inTok, 8500, "用量要并进 role.add 建的那一行");
   assert.strictEqual(page.STORE.roles.role1.tools.Edit, 5);
   assert.ok(page.STORE.roles.coordinator, "协调者从不 loop_say,但它烧的 token 要单独一行");
@@ -2089,12 +2089,12 @@ async function testAdapters() {
   ok("★ 适配器契约齐全，且 verified 是如实标的（没验过的 parse 直接留空）");
 
   // claude:真实样本 → 逐子 agent 用量（这条路以前是写死的,现在要证明搬家没搬坏）
-  let t = usage.createTracker({ roleOf: usage.roleResolver([{ name: "提议者", subagent: "forge-proposer" }]) });
+  let t = usage.createTracker({ roleOf: usage.roleResolver([{ name: "实现者", subagent: "forge-proposer" }]) });
   [
     { type: "assistant", parent_tool_use_id: null, message: { id: "m1", model: "opus",
       usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 2000 },
       content: [{ type: "tool_use", id: "tu_1", name: "Agent",
-        input: { subagent_type: "forge-proposer", description: "提议者：动手" } }] } },
+        input: { subagent_type: "forge-proposer", description: "实现者：动手" } }] } },
     { type: "assistant", parent_tool_use_id: "tu_1", message: { id: "m2", model: "sonnet",
       usage: { input_tokens: 900, output_tokens: 120 },
       content: [{ type: "tool_use", id: "b1", name: "Edit" }] } },
@@ -2103,7 +2103,7 @@ async function testAdapters() {
   let r = usage.reduceEvents(t.flush().concat([t.finalEvent()]));
   let by = {};
   r.agents.forEach(function (a) { by[a.role] = a; });
-  assert.strictEqual(by["提议者"].in, 900, "子 agent 的账落在子 agent 头上");
+  assert.strictEqual(by["实现者"].in, 900, "子 agent 的账落在子 agent 头上");
   assert.strictEqual(by["协调者"].in, 100);
   assert.strictEqual(r.costUsd, 0.5, "claude 报成本");
   ok("claude 适配器：真实样本 → 逐子 agent 用量 + 成本");
@@ -2229,14 +2229,14 @@ async function testAdapters() {
 
   /* ★ 混宿主时成本只有**报账的那几家**。
    *
-   * 实测:claude 提议者 + codex 反驳者跑完,只有 claude 发了带 total_cost_usd 的 total,
+   * 实测:claude 实现者 + codex 反驳者跑完,只有 claude 发了带 total_cost_usd 的 total,
    * codex 压根不报成本。裸写一个 "$0.03" 会被读成整次运行的花费 —— 那是少报账,
    * 跟这个项目其它地方的纪律冲突。
    * 另外两家各发一条 total,原来 last-wins 会把先来的那条直接丢掉。
    */
   const mixEvs = [
-    { t: "usage", role: "提议者", agent: "a", source: "claude（提议者）", in: 26, out: 3, tools: [] },
-    { t: "usage", total: true, source: "claude（提议者）", costUsd: 0.0342, in: 100, out: 10 },
+    { t: "usage", role: "实现者", agent: "a", source: "claude（实现者）", in: 26, out: 3, tools: [] },
+    { t: "usage", total: true, source: "claude（实现者）", costUsd: 0.0342, in: 100, out: 10 },
     { t: "usage", role: "反驳者", agent: "b", source: "codex（反驳者）", in: 112000, out: 3400, tools: [] }
   ];
   const mixU = usage.reduceEvents(mixEvs);
@@ -2324,7 +2324,7 @@ async function testPerRole() {
   const usage = require("./usage.js");
   const prSrc = fs.readFileSync(path.join(__dirname, "perrole.js"), "utf8");
 
-  const base = [{ name: "提议者", kind: "propose" }, { name: "反驳者", kind: "attack" },
+  const base = [{ name: "实现者", kind: "propose" }, { name: "反驳者", kind: "attack" },
     { name: "复核者", kind: "audit", trigger: "on_green" }];
 
   // ⚠ 分配策略要用**固定的合成宿主**来测。用真 codex 测的话,机器上那份
@@ -2345,29 +2345,29 @@ async function testPerRole() {
   assert.ok(/自动（多模型）/.test(got[0].modelSource), "要标明是自动分的");
   ok("★ 有多个模型就默认用多个（不是开关，是默认）");
 
-  // ★ 反驳者拿最强的 —— 软反驳者等于没有反驳者。提议者紧跟(它才是真写代码的那个)。
+  // ★ 反驳者拿最强的 —— 软反驳者等于没有反驳者。实现者紧跟(它才是真写代码的那个)。
   const byKind = {};
   got.forEach(function (r) { byKind[r.kind] = r; });
   assert.strictEqual(byKind.attack.model, "big", "反驳者要拿最强的那个");
   assert.notStrictEqual(byKind.propose.model, "tiny",
-    "★ 提议者不许拿最弱的模型（它才是真正要写代码的那个，踩过一次）");
+    "★ 实现者不许拿最弱的模型（它才是真正要写代码的那个，踩过一次）");
   // 模型正好够三个时,最弱的那个才轮到复核者(它只在判绿后看一眼)
   const three = A.assignModels(H([{ id: "big", strong: true }, { id: "mid" },
     { id: "tiny", weak: true }]), base);
   const k3 = {};
   three.forEach(function (r) { k3[r.kind] = r.model; });
   assert.deepStrictEqual(k3, { attack: "big", propose: "mid", audit: "tiny" },
-    "顺序应为 反驳者→提议者→复核者，实际 " + JSON.stringify(k3));
+    "顺序应为 反驳者→实现者→复核者，实际 " + JSON.stringify(k3));
 
   // ★ 模型不够时**不许循环回头** —— 循环会让优先级倒挂。实测:只剩 2 个模型时
-  //   提议者拿到了弱的,而排在它后面的复核者又拿回了强的。
+  //   实现者拿到了弱的,而排在它后面的复核者又拿回了强的。
   const two = A.assignModels(H([{ id: "big", strong: true }, { id: "small", weak: true }]), base);
   const k2 = {};
   two.forEach(function (r) { k2[r.kind] = r.model; });
   assert.strictEqual(k2.attack, "big", "反驳者仍拿最强");
   assert.strictEqual(k2.propose, "small");
   assert.strictEqual(k2.audit, "small",
-    "★ 不许循环回头把强模型又发给优先级更低的复核者（那样提议者反而更差）");
+    "★ 不许循环回头把强模型又发给优先级更低的复核者（那样实现者反而更差）");
   assert.ok(/只有 2 个模型可用/.test(two[0].modelSource), "要说清是模型不够而不是刻意这么分");
   ok("★ 模型不够时优先级单调（靠后的角色共用最后一个，不循环回头倒挂）");
 
@@ -2378,7 +2378,7 @@ async function testPerRole() {
     assert.ok(okIds.indexOf(r.model) >= 0, "分出来的模型必须是 codex 真报过的：" + r.model);
     assert.ok(!bad.has(r.model), "★ 不许再分一个已经试过跑不了的模型：" + r.model);
   });
-  ok("★ 强模型优先给反驳者、提议者紧跟；真宿主上只用它报过且没被拉黑的");
+  ok("★ 强模型优先给反驳者、实现者紧跟；真宿主上只用它报过且没被拉黑的");
 
   // ★ 要求②:只有一个模型时,模型可以一样,**会话不许一样**
   const onlyOne = { id: "solo", label: "Solo", bin: "solo", subagents: false,
@@ -2409,10 +2409,10 @@ async function testPerRole() {
 
   // 角色规格解析
   assert.deepStrictEqual(P.parseRoleSpec("proposer:codex:gpt-5.5:acceptEdits"),
-    { name: "提议者", kind: "propose", agent: "codex", model: "gpt-5.5", permissionMode: "acceptEdits" });
+    { name: "实现者", kind: "propose", agent: "codex", model: "gpt-5.5", permissionMode: "acceptEdits" });
   assert.strictEqual(P.parseRoleSpec("critic").kind, "attack");
   assert.strictEqual(P.parseRoleSpec("reviewer").trigger, "on_green", "复核者要判绿后才出场");
-  // 混宿主必须合法:claude 演提议者、codex 演反驳者
+  // 混宿主必须合法:claude 演实现者、codex 演反驳者
   const mixed = P.resolveRoles([P.parseRoleSpec("proposer:claude"), P.parseRoleSpec("critic:codex")]);
   assert.strictEqual(mixed[0].agent, "claude");
   assert.strictEqual(mixed[1].agent, "codex");
@@ -2425,14 +2425,14 @@ async function testPerRole() {
   const p = P.rolePrompt({
     role: { name: "反驳者", kind: "attack" },
     task: "修重复回调", goal: { command: "pytest -q" }, budget: { rounds: 6 }, round: 2,
-    said: [{ role: "提议者", summary: "加了幂等键", body: "改了 webhook.py:42" }],
+    said: [{ role: "实现者", summary: "加了幂等键", body: "改了 webhook.py:42" }],
     lastGate: { detail: "未达标 · exit 1", output: "FAILED test_dup" },
     lastAttacks: [{ summary: "并发下仍会重复" }]
   });
   assert.ok(p.indexOf("修重复回调") >= 0, "要带任务");
   assert.ok(p.indexOf("pytest -q") >= 0, "要带判据命令");
   assert.ok(/不许改它/.test(p), "要明写不许改判据");
-  assert.ok(p.indexOf("加了幂等键") >= 0, "★ 要带上本轮提议者说了什么，否则它在反驳空气");
+  assert.ok(p.indexOf("加了幂等键") >= 0, "★ 要带上本轮实现者说了什么，否则它在反驳空气");
   assert.ok(p.indexOf("FAILED test_dup") >= 0, "★ 要带上一轮判据输出，否则只会重复上一轮的改法");
   assert.ok(p.indexOf("并发下仍会重复") >= 0, "要带上一轮的反驳点");
   assert.ok(/不许改任何文件/.test(p), "反驳者的职责里要写明不许改文件");
@@ -2519,7 +2519,7 @@ async function testJudge() {
   const jcode = jsrc.split("\n").filter(function (l) { return !/^\s*(\/\/|\*|\/\*)/.test(l); }).join("\n");
   assert.ok(/permissionFor\(ad, "readOnly"\)/.test(jcode) && /readOnly: true/.test(jcode),
     "只读要落到宿主参数上，不是提示词里的一句请求");
-  assert.ok(/avoidModels/.test(jcode), "要尽量避开提议者用的那个模型（同模型自评通过率虚高）");
+  assert.ok(/avoidModels/.test(jcode), "要尽量避开实现者用的那个模型（同模型自评通过率虚高）");
   assert.ok(/delete env\.CODE_FORGE_URL/.test(jcode), "评审者不该往事件流里写东西");
   ok("★ 判定人是独立评审者（只读、独立会话、尽量换模型），不是协调者");
 
@@ -2557,7 +2557,7 @@ async function testJudge() {
   const host = require("./hostrun.js").create(function (e) { evs.push(e); });
   host.begin({ session: "重构可读性", task: "把 payments 重构得更好读",
     goal: { cwd: __dirname, rubric: "所有公开函数都有 docstring" },
-    roles: [{ name: "提议者", kind: "propose" }], budget: { rounds: 2, seconds: 60 } });
+    roles: [{ name: "实现者", kind: "propose" }], budget: { rounds: 2, seconds: 60 } });
   assert.ok(host.status().active, "只有 rubric 也要能开局（不能因为没命令就不让跑）");
   ok("评审判据可以单独用（给没有命令可判的目标）");
 
@@ -2582,29 +2582,29 @@ async function testJudge() {
     const es = [];
     const h = require("./hostrun.js").create(function (e) { es.push(e); });
     h.begin({ session: "x", goal: { command: "node -e \"process.exit(1)\"", cwd: __dirname },
-      roles: [{ name: "提议者", kind: "propose" }],
+      roles: [{ name: "实现者", kind: "propose" }],
       budget: { rounds: 9, seconds: 60, idleRounds: 2 } });
     return h;
   };
   const h1 = mk();
-  h1.say({ role: "提议者", summary: "我分析了一下", meta: { wrote: false } });
+  h1.say({ role: "实现者", summary: "我分析了一下", meta: { wrote: false } });
   let v1 = await h1.gate({ observed: true });
   assert.strictEqual(v1.idleRounds, 1);
-  h1.say({ role: "提议者", summary: "再分析一下", meta: { wrote: false } });
+  h1.say({ role: "实现者", summary: "再分析一下", meta: { wrote: false } });
   v1 = await h1.gate({ observed: true });
   assert.strictEqual(v1.stopReason, "idle_spin", "观察到连续没动手 → 空跑停");
   assert.ok(/权限够吗/.test(v1.anomaly || ""), "要给可行动的下一步，不是只报一个词");
 
   const h2 = mk();
   for (let i = 0; i < 4; i++) {
-    h2.say({ role: "提议者", summary: "说了句话" });      // 不报 diff、也没人观察
+    h2.say({ role: "实现者", summary: "说了句话" });      // 不报 diff、也没人观察
     const v = await h2.gate();                            // 不传 observed
     assert.notStrictEqual(v.stopReason, "idle_spin",
       "★ 观察不到时不许算空跑（「没报」≠「没改」，误杀健康回环比没检测更糟）");
   }
   // 观察到动过手 → 计数归零
   const h3 = mk();
-  h3.say({ role: "提议者", summary: "改了 a.py", meta: { wrote: true } });
+  h3.say({ role: "实现者", summary: "改了 a.py", meta: { wrote: true } });
   const v3 = await h3.gate({ observed: true });
   assert.strictEqual(v3.idleRounds, 0, "动过手要把空跑计数归零");
   assert.strictEqual(v3.acted, true);
@@ -2612,7 +2612,7 @@ async function testJudge() {
 
   // 停滞:角色进程卡住由驱动方报上来,它是流程异常不是没达标
   const h4 = mk();
-  h4.say({ role: "提议者", summary: "（卡住被中止）", meta: { stalled: true, wrote: false } });
+  h4.say({ role: "实现者", summary: "（卡住被中止）", meta: { stalled: true, wrote: false } });
   const v4 = await h4.gate({ observed: true });
   assert.strictEqual(v4.stopReason, "stalled", "卡住要报 stalled，不是 no_progress");
   assert.ok(/卡住/.test(v4.anomaly || ""));
