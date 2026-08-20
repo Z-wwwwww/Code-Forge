@@ -233,6 +233,21 @@ main{min-width:0;height:calc(100vh - 56px);overflow-y:auto;background:var(--bg)}
 .stream .say{font-family:var(--mono);font-size:12px;color:#7C8794}
 .caret-blink{width:7px;height:14px;background:var(--acc);animation:streamCaret 1s step-end infinite}
 
+/* 工具流:进行中那一轮末尾「此刻在动什么手」。列宽与 .stream 对齐 —— 底下那条
+   心跳行是同一根轨道上的最后一格,错开一格就看不出是一串动作 */
+.feed{padding:8px 0 2px}
+.feed .fnote{display:grid;grid-template-columns:68px 22px minmax(0,1fr);column-gap:12px;
+  font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--tx-10);padding-bottom:4px}
+.feed .fnote>span{grid-column:3}
+.fr{display:grid;grid-template-columns:68px 22px minmax(0,1fr);column-gap:12px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.75}
+.fr .fw{font-size:11px;font-weight:600;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr .fm{text-align:center;color:var(--tx-9)}
+.fr .ft{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--tx-6)}
+.fr .tn{color:var(--tool)}
+.fr.err .fm,.fr.err .ft{color:var(--del)}
+.fr.skip .ft{color:var(--warn)}
+
 /* ---------------- right pane ---------------- */
 .blk-conf{padding:14px 16px 12px}
 .blk-conf .seclab{margin-bottom:11px;display:block}
@@ -301,9 +316,12 @@ var BAR_COLORS = ["#171B21","#63C68E","#E8C468","#3A4450"];
 var BAR_LEGEND = null;   // 见 L10N.*.barLegend(按 run.lang 取)
 var SEV_COLORS = { HIGH:"#E2707A", MED:"#E8C468", LOW:"#8B95A2", OPEN:"#6FD3C7" };
 var FALLBACK_COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
+/* 工具流在进行中那一轮里画几行。多了会把聊天记录顶出视口 —— 而人往下看的正是
+   最近这几条;想看更早的动作没有别的地方可看,因为这条流**不入档**(定过的账)。 */
+var FEED_ROWS = 12;
 
 var STORE = { run:null, roles:{}, roleOrder:[], rounds:[], byN:{}, streaming:null, ended:null, count:0, unknown:0,
-  usageTotal:null };
+  usageTotal:null, feed:[], feedRound:0 };
 // 服务端的回环状态(是否真的在跑)。页面自己猜不出来 —— 日志里没有 run.end 既可能是
 // 还在跑,也可能是进程早就没了,这两件事对「停止」按钮该不该出现是相反的。
 var SERVER = { active:false, lastReason:null, checked:false };
@@ -337,6 +355,7 @@ var L10N = {
     legIn: "输入", legOut: "输出", secModels: "模型对比 MODELS",
     secConf: "本轮分歧点 CONFLICTS", secPatch: "代码演进 PATCH TRAIL",
     all: "全部", targets: "针对", waitNext: "等待下一个事件…", thisRound: "本轮",
+    feedNote: "此刻在动的手 · 不入档", feedSkipped: function(n){ return "… 中间 "+n+" 条动作没跟上（它手比这面板快）"; },
     verdict: "裁决", pending: "待裁决", collapseAll: "收起全部", expandAll: "展开全部",
     archive: "■ 档案", lastEvent: " 最后事件 ", firstEvent: " 等第一条事件",
     pulseTip: "这个标志每秒自己转,不靠事件 —— 它停了才是页面真卡了",
@@ -380,6 +399,7 @@ var L10N = {
     legIn: "input", legOut: "output", secModels: "MODELS",
     secConf: "CONFLICTS THIS ROUND", secPatch: "PATCH TRAIL",
     all: "all", targets: "targets", waitNext: "waiting for the next event…", thisRound: "this round",
+    feedNote: "live actions · not archived", feedSkipped: function(n){ return "… "+n+" actions skipped (it works faster than this panel)"; },
     verdict: "verdict", pending: "pending", collapseAll: "collapse all", expandAll: "expand all",
     archive: "■ archive", lastEvent: " last event ", firstEvent: " waiting for the first event",
     pulseTip: "this marker spins on its own every second, not on events - if it stops, the page is truly stuck",
@@ -436,6 +456,7 @@ function applyEvent(ev){
       if (STORE.run) {
         STORE.roles = {}; STORE.roleOrder = []; STORE.rounds = []; STORE.byN = {};
         STORE.streaming = null; STORE.ended = null; STORE.usageTotal = null;
+        STORE.feed = []; STORE.feedRound = 0;
         state.round = null; state.follow = true; state.open = {}; state.roleFilter = null;
       }
       STORE.run = ev;
@@ -524,6 +545,14 @@ function applyEvent(ev){
       break;
     }
     case "run.streaming": STORE.streaming = ev; STORE.streamingAt = Date.now(); break;
+    /* 工具流:**易失**通道推来的(不落盘、不占 SSE id —— 见 server.js 的 emit)。
+     * 只描述此刻,所以换轮整批扔:上一轮的 Grep 留在屏上会让人以为它还在找。 */
+    case "feed":
+      if (STORE.feedRound !== ev.round) { STORE.feed = []; STORE.feedRound = ev.round; }
+      STORE.feed.push(ev);
+      if (STORE.feed.length > 200) STORE.feed = STORE.feed.slice(-200);
+      STORE.streamingAt = Date.now();
+      break;
     case "run.end":       STORE.ended = ev; refreshServer(); break;
     default:
       // 认不出的类型不静默吞掉:计数并在页头显示,否则「喂错了形状」看不出来
@@ -878,7 +907,28 @@ function renderMain(round, isLive){
   var sRole = STORE.streaming && (STORE.streaming.actor ||
     (STORE.streaming.role !== "gate" ? STORE.streaming.role : null));
   var who = sRole ? roleOf(sRole).name : WT().thisRound;
-  var stream = isLive ? (
+  /* 工具流:每秒从子 agent 档案里读到的动作。**只画进行中的轮** ——
+   * 它不入档,回放旧档案时本来就不存在(所以别在非 live 的轮里留一块空面板)。
+   * 角色名只在换人时打一次:一排重复的名字会把正文挤没。 */
+  var feedRows = "";
+  if (isLive && STORE.feed.length) {
+    var prevRole = null;
+    feedRows = '<div class="feed"><div class="fnote"><span>' + esc(WT().feedNote) + "</span></div>" +
+      STORE.feed.slice(-FEED_ROWS).map(function (f) {
+        var r = f.actor && STORE.roles[f.actor] ? roleOf(f.actor) : null;
+        var same = r && prevRole === f.actor;
+        if (r) prevRole = f.actor;
+        var mark = f.kind === "err" ? "✗" : f.kind === "tool" ? "→" : f.kind === "skip" ? "…" : "·";
+        var body = f.kind === "skip" ? esc(WT().feedSkipped(f.n))
+          : (f.kind === "tool" ? '<span class="tn">' + esc(f.name || "?") + "</span> " : "") + esc(f.text || "");
+        return '<div class="fr' + (f.kind === "err" ? " err" : "") + (f.kind === "skip" ? " skip" : "") + '">' +
+          '<span class="fw" style="color:' + (r ? r.color : "transparent") + '">' +
+            esc(r && !same ? r.name : "") + "</span>" +
+          '<span class="fm">' + mark + "</span>" +
+          '<span class="ft">' + body + "</span></div>";
+      }).join("") + "</div>";
+  }
+  var stream = isLive ? (feedRows + 
     '<div class="stream">' + "<div></div>" +
       '<div class="rail"><span class="live-dot"></span></div>' +
       '<div class="body"><span class="who">' + esc(who) + '</span>' +

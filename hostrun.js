@@ -30,7 +30,12 @@ function stamp() {
   return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
 
-function create(append) {
+/**
+ * @param append 事件入档 + 推流(server.js 的 append:写 run.jsonl,带 SSE id,可断线回放)
+ * @param emit   **易失**通道:只推给正在看的客户端,不落盘、不占 SSE id(可不传)。
+ *               工具流走这条 —— 见 chatusage.createFeed 里那笔「为什么不入档」的账。
+ */
+function create(append, emit) {
   const st = {
     active: false, cfg: null, round: 0, startedAt: 0,
     lastValue: null, noProgress: 0, gatePassed: false,
@@ -62,6 +67,42 @@ function create(append) {
       append(e);
       if (e.t === "usage" && !e.total) st.tokensUsed += (e.in || 0) + (e.out || 0);
     });
+  }
+
+  /* 工具流:每秒把子 agent 档案里**新写进去的那几行**变成「此刻在动什么手」,
+   * 只推给正在看的人。这是「掌控回环在做什么」那半边 ——
+   * 心跳(90s 一声、静默才响)回答的是「还活着吗」,它回答的是「在干什么」。
+   *
+   * 纪律三条:
+   *   ① 不入档 —— 走 emit 不走 append(体积/淹没那笔账在 chatusage.createFeed 上);
+   *   ② 不许把回环搞挂 —— 任何异常就地关掉这条流,回环照跑;
+   *   ③ 没人传 emit(测试、旧调用方)就整个不启动,一分钱不花。 */
+  let feeder = null;
+  let feedTimer = null;
+  function stopFeed() {
+    if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
+  }
+  function armFeed(ms) {
+    stopFeed();
+    if (!emit || !feeder) return;
+    feedTimer = setInterval(function () {
+      if (!st.active) { stopFeed(); return; }
+      // 没人在看就别去读档案(它描述的是此刻,没观众时也没人会「错过」)
+      if (emit.wanted && !emit.wanted()) return;
+      let evs;
+      try { evs = feeder.pull(st.round); } catch (_) { feeder = null; stopFeed(); return; }
+      if (!evs || !evs.length) return;
+      emit(evs.map(function (e) {
+        // 档案认出来的是角色**名**;观察面按 id 认人(颜色、脉搏都挂在 id 上)。
+        // actor 跟 id 同值:TUI/网页的脉搏本来就吃这个字段,工具流一来脉搏就跟着走 ——
+        // 「谁在动」从此是观察到的,不再是按「上一条是谁说的」推的。
+        // ⚠ 只动 role/actor —— `name` 是**工具名**(Bash/Read/…),写角色名进去
+        //   面板上每一行都会变成「反驳者 反驳者」,工具名反倒没了
+        const r = st.cfg.roles.filter(function (x) { return x.name === e.role; })[0];
+        return Object.assign({}, e, { role: r ? r.id : null, actor: r ? r.id : null });
+      }));
+    }, ms);
+    feedTimer.unref && feedTimer.unref();
   }
 
   function remaining() {
@@ -203,10 +244,16 @@ function create(append) {
     // cwd:优先用协调者带过来的(它在你干活的目录里),其次判据命令的目录,最后才是本进程的
     puller = chatusage.createPuller({ roles: roles, sinceMs: st.startedAt,
       cwd: cfg.cwd || (cfg.goal && cfg.goal.cwd) || process.cwd() });
+    // 工具流跟账走同一批档案、同一个 cwd —— 两者认出来的角色必须是同一个,否则
+    // 面板上「反驳者在 Grep」和账上的「反驳者」会是两个人
+    feeder = chatusage.createFeed({ roles: roles, sinceMs: st.startedAt,
+      cwd: cfg.cwd || (cfg.goal && cfg.goal.cwd) || process.cwd() });
     append({ t: "round.start", n: 1, title: tt.roundTitle(1), meta: stamp() + " → " + tt.inProgress });
     // 静默看门狗:第一条 loop_say 到来之前,每隔一阵在直播里报一声「还没人发言」——
     // 空屏 + 无解释是最坏的等待。quietWarnMs 可配只为测试(默认 90s)。
     armQuietWatch(Math.max(50, Number(cfg.quietWarnMs) || 90000));
+    // 1s 级:比心跳快两个数量级,因为它要跟得上手速。feedMs 可配只为测试
+    armFeed(Math.max(50, Number(cfg.feedMs) || 1000));
 
     return {
       runId: st.startedAt, round: 1, roles: roles.map(function (r) { return { id: r.id, name: r.name, kind: r.kind }; }),
@@ -539,6 +586,7 @@ function create(append) {
 
   function finish(reason, detail) {
     st.active = false;
+    stopFeed();   // 局散了就别再读档案 —— 下一拍才自停会让「已结束」的画面又冒出一行动作
     st.endedReason = reason;
     append({
       t: "run.end", reason: reason, detail: detail || "",

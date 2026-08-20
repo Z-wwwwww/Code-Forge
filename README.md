@@ -102,6 +102,11 @@ PATH 里**没有** `code-forge` 这条命令(旧版装过的,重装时会顺手�
   每轮点开看做了什么、逐 agent 用量、停止原因。按 `q` 关窗**回环仍在跑**。
 - **网页监控台**地址在开跑时一并给出(默认 http://localhost:4610),和终端看同一份事件流,
   逐 agent 用量、每轮明细都在。
+- **工具流**(两边都有):进行中那一轮末尾按秒摄下「此刻在动什么手」——
+  `→ Grep event_id pay.js` / `→ Bash npm test` / 跑不通的那条 `✗ Exit 1 …`。
+  料是 Claude Code 自己给子 agent 存的档案(跟用量同一批文件),所以不靠角色自报。
+  这条流**不入档**:只推给正在看的人。一份子 agent 档案 400KB / 153 行,3 角色 × 8 轮
+  就是 ~3700 条 —— 入档会把那二十来条正式发言埋在噪音里（档案里存的仍旧是发言、判据、轮次）。
 - 诊断/更新走 npx(一次性,不进 PATH):`npx github:Z-wwwwww/Code-Forge doctor` / `install`。
 
 
@@ -568,6 +573,7 @@ hostrun.js    宿主驱动的状态机：begin/say/gate/end，以及那条拒绝
 gate.js       命令判据（全代码）：退出码 + 可选指标区间 + 输出指纹（没 metric 时判零进展）
 judge.js      评审判据：不可量化目标交给**独立评审者**判（只读/独立会话/换模型/必须给证据）
 server.js     HTTP + SSE + append-only 日志；--mcp 时转 stdio
+              另带一条**易失**通道(emit)：工具流只推给正在看的人，不落盘、不占 SSE id
 index.html    监控台（reducer + 渲染）
 setup-local.html  自带 key 那套的配置页（可选模式）
 

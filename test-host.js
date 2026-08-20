@@ -1811,6 +1811,171 @@ async function testChatUsage() {
     ok("★ 心跳先观察后推测：档案还在写=正在干活(事实)，看不到才带「多半」(推测标成推测)");
   }
 
+  /* ★ 工具流:「掌控回环在做什么」那半边。
+   *   心跳回答的是「还活着吗」(90s 才响一声),工具流回答的是「在干什么」(1s 级)。
+   *   五条纪律,少一条这条流就没法信:
+   *     ① 增量 —— 同一批行不许再播一遍;
+   *     ② 半行不吃 —— agent 正在写,读一半会崩在 JSON.parse 上;
+   *     ③ 偏移量按**字节**走 —— 中文一个字三字节,按字符算会一路错位;
+   *     ④ 成功的结果不播、失败的要播 —— 单条结果 28KB,播全等于把面板灌满;
+   *     ⑤ **不入档** —— 走 emit 不走 append(体积那笔账在 chatusage.createFeed 上)。 */
+  {
+    const NL = String.fromCharCode(10);
+    const BS = String.fromCharCode(92);
+    const root3 = path.join(os.tmpdir(), "cf-feed-" + process.pid);
+    const sub3 = path.join(root3, "sess-f", "subagents");
+    fs.mkdirSync(sub3, { recursive: true });
+    const TF = Date.parse("2026-08-19T00:00:00.000Z");
+    fs.writeFileSync(path.join(sub3, "agent-fff.meta.json"),
+      JSON.stringify({ agentType: "forge-critic", description: "挖" }));
+    const fFile = path.join(sub3, "agent-fff.jsonl");
+    const asstF = function (ts, content) {
+      return JSON.stringify({ type: "assistant", timestamp: ts,
+        message: { id: "m" + ts, model: "claude-opus-5", content: content } });
+    };
+    const userF = function (ts, content) {
+      return JSON.stringify({ type: "user", timestamp: ts, message: { content: content } });
+    };
+    fs.writeFileSync(fFile, [
+      // 开局之前那一局留下的动作:同一个目录里躺着,一条都不许播
+      asstF("2026-08-18T23:59:00.000Z", [{ type: "tool_use", id: "old", name: "Read", input: { file_path: "/a/old.js" } }]),
+      // 思考块在档案里是空的(只有 signature)—— 播了就是一排空行
+      asstF("2026-08-19T00:00:10.000Z", [{ type: "thinking", thinking: "", signature: "xx" }]),
+      asstF("2026-08-19T00:00:11.000Z", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "npm  test" } }]),
+      asstF("2026-08-19T00:00:11.500Z", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "npm  test" } }]),
+      userF("2026-08-19T00:00:20.000Z", [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "Exit 1  boom" }]),
+      userF("2026-08-19T00:00:21.000Z", [{ type: "tool_result", tool_use_id: "t2", content: "文件全文 400 行……" }]),
+      asstF("2026-08-19T00:00:22.000Z", [{ type: "tool_use", id: "t3", name: "Read",
+        input: { file_path: "C:" + BS + "x" + BS + "pay.js", offset: 88 } }])
+    ].join(NL) + NL);
+
+    const feed = cu.createFeed({ root: root3, roles: roles, sinceMs: TF });
+    const f1 = feed.pull(3);
+    assert.deepStrictEqual(f1.map(function (x) { return x.kind + ":" + (x.name || ""); }),
+      ["tool:Bash", "err:", "tool:Read"],
+      "★ 播的是动作:工具调用 + 失败的结果。思考空的不播、成功的结果不播(28KB 一条,播了只是灌满面板)、" +
+      "上一局的不播、同一条消息的第二片不播 —— 实到 " + JSON.stringify(f1.map(function (x) { return x.kind; })));
+    assert.strictEqual(f1[0].text, "npm test", "★ 一行一条:空白压成一格(几 KB 的命令会把画面顶烂)");
+    assert.strictEqual(f1[2].text, "pay.js:88", "★ 长路径只留文件名 —— 整条 Windows 路径会把正文挤没");
+    assert.strictEqual(f1[0].role, "反驳者", "★ 认角色跟账走同一套规矩,否则面板上的人和账上的人是两个");
+    assert.strictEqual(f1[0].round, 3, "动作记在拉取时的那一轮 —— 观察面靠它换轮清屏");
+    assert.strictEqual(feed.pull(3).length, 0, "★ ① 增量:没长就没有新动作(重播会让人以为它又跑了一遍)");
+
+    // ② 半行:agent 正在写。读一半 JSON.parse 必崩,而这层崩了就等于直播黑屏
+    fs.appendFileSync(fFile,
+      '{"type":"assistant","timestamp":"2026-08-19T00:00:30.000Z","message":{"content":[{"type":"tool_u');
+    assert.strictEqual(feed.pull(3).length, 0, "★ ② 半行留到下次,不吃也不崩");
+    fs.appendFileSync(fFile, 'se","id":"t4","name":"Grep","input":{"pattern":"幂等|idempotent"}}]}}' + NL);
+    const f2 = feed.pull(3);
+    assert.ok(f2.length === 1 && f2[0].name === "Grep" && f2[0].text.indexOf("幂等") === 0,
+      "★ 补齐了就立刻播出那一条(半行不能变成永久丢掉的一条)");
+    // ③ 上一条带中文(一字三字节):偏移量若按字符算,这里开始就一路错位
+    fs.appendFileSync(fFile, asstF("2026-08-19T00:00:40.000Z",
+      [{ type: "tool_use", id: "t5", name: "Edit", input: { file_path: "/a/b/webhook.py" } }]) + NL);
+    const f3 = feed.pull(3);
+    assert.ok(f3.length === 1 && f3[0].name === "Edit" && f3[0].text === "webhook.py",
+      "★ ③ 偏移量按字节走 —— 中文之后的那一条要完好地播出来,不是乱码也不是半句");
+
+    // ④ 截断要说出来:悄悄丢掉会让面板看起来「一条没漏」
+    const feedCap = cu.createFeed({ root: root3, roles: roles, sinceMs: TF, cap: 2 });
+    const fc = feedCap.pull(3);
+    assert.ok(fc.length === 3 && fc[0].kind === "skip" && fc[0].n >= 1,
+      "★ 一拍里动作太多时留最新的几条,并明写「中间 N 条没跟上」(截断必须说出来)");
+    try { fs.rmSync(root3, { recursive: true, force: true }); } catch (_) {}
+  }
+
+  /* ★ ⑤ 不入档:工具流走**易失**通道(emit),一条都不许进 run.jsonl。
+   *   一份档案 400KB / 153 行,3 角色 × 8 轮 ~3700 条 —— 入档会同时压垮磁盘、
+   *   服务端常驻的 log 数组(每个新客户端连上还要按 id 回放)和人眼(二十来条正式发言被埋)。 */
+  {
+    const NL = String.fromCharCode(10);
+    const cfgDir = path.join(os.tmpdir(), "cf-feedcfg-" + process.pid);
+    const workCwd = path.join(os.tmpdir(), "cf-feedwork-" + process.pid);
+    const sub4 = path.join(cfgDir, "projects", cu.slugFor(workCwd), "s1", "subagents");
+    fs.mkdirSync(sub4, { recursive: true });
+    const oldCfg = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = cfgDir;
+    const arch = [], live = [];
+    const sink = function (bin) {
+      return function (e) { (Array.isArray(e) ? e : [e]).forEach(function (x) { bin.push(x); }); };
+    };
+    const hf = require("./hostrun.js").create(sink(arch), sink(live));
+    hf.begin({ session: "s", cwd: workCwd, lang: "zh", quietWarnMs: 999999, feedMs: 60,
+      budget: { rounds: 3, seconds: 60 },
+      roles: [{ id: "r1", name: "实现者", kind: "propose", model: "sonnet" },
+              { id: "r2", name: "反驳者", kind: "attack", model: "opus" }] });
+    // begin 之后才落的档案 —— 时间戳必须晚于开局,否则按规矩就该被当成上一局的
+    fs.writeFileSync(path.join(sub4, "agent-live.meta.json"),
+      JSON.stringify({ agentType: "forge-critic", description: "反驳者①" }));
+    fs.writeFileSync(path.join(sub4, "agent-live.jsonl"),
+      JSON.stringify({ type: "assistant", timestamp: new Date().toISOString(),
+        message: { id: "mlive", model: "claude-opus-5",
+          content: [{ type: "tool_use", id: "L1", name: "Grep", input: { pattern: "event_id", path: "/a/pay.js" } }] } }) + NL);
+    await new Promise(function (r) { setTimeout(r, 400); });
+    hf.end("abandoned", "测完");
+    if (oldCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oldCfg;
+    try { fs.rmSync(cfgDir, { recursive: true, force: true }); } catch (_) {}
+
+    const fed = live.filter(function (e) { return e.t === "feed"; });
+    assert.ok(fed.length >= 1, "★ 工具流要真的推出来(易失通道) —— 实到 " + live.length + " 条易失事件");
+    assert.ok(!arch.some(function (e) { return e.t === "feed"; }),
+      "★ ⑤ 一条都不许进档案:run.jsonl 是那二十来条正式发言的地方,不是日志桶");
+    assert.strictEqual(fed[0].name, "Grep",
+      "★ name 是**工具名** —— 写角色名进去,面板每行都会变成「反驳者 反驳者」而工具名没了");
+    assert.ok(fed[0].role === "r2" && fed[0].actor === "r2",
+      "★ 档案认出来的是角色名,推出去必须换成 id:颜色和脉搏都挂在 id 上");
+
+    const srvSrc = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+    const emitBody = srvSrc.slice(srvSrc.indexOf("function emit("), srvSrc.indexOf("/* ---------------- HTTP"));
+    assert.ok(emitBody.indexOf('"data: "') >= 0 && emitBody.indexOf('"id: "') < 0,
+      "★ 易失帧不许带 id: —— SSE 的 id 就是档案下标,带了会顶走 Last-Event-ID,重连回放就缺一段");
+    assert.ok(/create\(append, emit\)/.test(srvSrc), "工具流要接上易失通道");
+    const hostSrcF = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
+    assert.ok(/emit\.wanted/.test(srvSrc) && /emit\.wanted && !emit\.wanted\(\)/.test(hostSrcF),
+      "★ 没人在看就不去读档案 —— 回环跑一小时、人看几分钟是常态,无观众时连 readdir 都不应该发生");
+    ok("★ 工具流：档案里读得到的动作 1s 级直播（增量/半行/字节偏移/失败才播），且一条不入档");
+  }
+
+  /* ★ 两个观察面一致(用户点名):工具流 TUI 与网页都要有,且只在进行中的轮里画。 */
+  {
+    const NL2 = String.fromCharCode(10);
+    const tuiF = require("./tui.js");
+    const stF = tuiF.newState();
+    [{ t: "run.start", session: "s", mode: "host", lang: "zh", budget: { rounds: 3, seconds: 60 } },
+     { t: "role.add", id: "r2", name: "反驳者", model: "opus" },
+     { t: "round.start", n: 1 },
+     { t: "feed", round: 1, role: "r2", actor: "r2", kind: "tool", name: "Grep", text: "event_id  pay.js" },
+     { t: "feed", round: 1, role: "r2", actor: "r2", kind: "err", text: "Exit 1  同一 event_id 又入账了" }
+    ].forEach(function (e) { tuiF.reduce(stF, e); });
+    const flatF = function () {
+      return tuiF.renderLines(stF, 100, { open: 1, sel: 1 })
+        .map(function (l) { return (l.text || "").replace(/\x1b\[[0-9;]*m/g, ""); }).join(NL2);
+    };
+    const shown = flatF();
+    assert.ok(/反驳者 │ → Grep event_id/.test(shown),
+      "★ 工具行 = 角色名 │ → 工具 参数(「谁在动」不许让人从正文里猜)");
+    assert.ok(/✗ Exit 1/.test(shown), "★ 失败的结果要显眼 —— 卡在跑不通的命令上最该被一眼看见");
+    assert.strictEqual(stF.unknown, 0, "工具流不许被当成认不出的事件");
+    tuiF.reduce(stF, { t: "feed", round: 2, role: "r2", actor: "r2", kind: "tool", name: "Read", text: "pay.js" });
+    assert.ok(stF.feed.length === 1 && stF.feedRound === 2,
+      "★ 换轮整批扔:上一轮的 Grep 留在屏上会让人以为它还在找");
+    tuiF.reduce(stF, { t: "round.end", n: 2, winner: "未达标" });
+    tuiF.reduce(stF, { t: "run.end", reason: "abandoned", rounds: 2 });
+    assert.ok(!/→ Read/.test(flatF()),
+      "★ 局散了就不画 —— 这条流不入档,回放旧档案时它本来就不存在,留在屏上等于假装还在动");
+
+    const htmlF = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+    assert.ok(/case "feed"/.test(htmlF) && /STORE\.feedRound/.test(htmlF) && /FEED_ROWS/.test(htmlF),
+      "网页同款:收工具流、按轮清屏、只画最近若干行");
+    assert.ok(/isLive && STORE\.feed\.length/.test(htmlF),
+      "★ 网页也只在进行中的轮里画工具流");
+    const tuiSrcF = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
+    assert.ok(/ev\.t === "feed" && ev\.actor/.test(tuiSrcF),
+      "★ 脉搏改吃观察:工具流的 actor 是「它的档案这一秒真的在长」,比按上一条发言推的准");
+    ok("★ 工具流两面一致：TUI/网页都画、只画进行中的轮、换轮清屏、脉搏跟着观察走");
+  }
+
+
   /* ★ 两个观察面功能一致(用户点名):分歧详情与补丁台账 TUI 也要看得到。 */
   {
     const tuiC2 = require("./tui.js");

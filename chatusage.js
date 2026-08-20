@@ -213,6 +213,165 @@ function createPuller(opts) {
   };
 }
 
+/* ---------------- 工具流:此刻在动什么手(直播用,**不入档**) ---------------- */
+
+/** 长路径只留文件名 —— 一行里塞 `C:\Projects_GitHub_my\code-forge\mcp.js` 会把正文顶掉 */
+function baseName(p) {
+  const s = String(p == null ? "" : p);
+  const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+  return i < 0 ? s : s.slice(i + 1);
+}
+
+/** 压成一行并封顶 —— 面板一行一条,换行和几 KB 的命令都会把画面顶烂 */
+function oneLine(s, max) {
+  s = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  max = max || 160;
+  return s.length > max ? s.slice(0, max - 1) + "\u2026" : s;
+}
+
+/**
+ * 工具调用 → 一行人话。**只取那个能说明「在干什么」的字段**:
+ * Bash 是命令,Read/Edit 是文件名,Grep 是模式 —— 把整个 input 倒出来等于没写。
+ * 表里没有的工具走兜底(第一个字符串字段),总比只剩工具名强。
+ */
+const TOOL_BRIEF = {
+  Bash: function (i) { return i.command; },
+  Read: function (i) { return baseName(i.file_path) + (i.offset ? ":" + i.offset : ""); },
+  Edit: function (i) { return baseName(i.file_path); },
+  Write: function (i) { return baseName(i.file_path); },
+  Grep: function (i) { return String(i.pattern || "") + (i.path ? "  " + baseName(i.path) : ""); },
+  Glob: function (i) { return i.pattern; },
+  Task: function (i) { return i.description; },
+  WebFetch: function (i) { return i.url; },
+  WebSearch: function (i) { return i.query; },
+  TodoWrite: function () { return ""; }
+};
+
+function briefOf(name, input) {
+  let s = "";
+  try { s = TOOL_BRIEF[name] ? TOOL_BRIEF[name](input || {}) : ""; } catch (_) { s = ""; }
+  if (!s && input && typeof input === "object") {
+    const k = Object.keys(input).filter(function (x) { return typeof input[x] === "string" && input[x]; })[0];
+    if (k) s = input[k];
+  }
+  return oneLine(s);
+}
+
+/** tool_result 的正文:字符串(实测都是)或块数组,两种都认 */
+function resultText(c) {
+  if (typeof c === "string") return c;
+  return (Array.isArray(c) ? c : []).map(function (b) { return b && b.text; }).filter(Boolean).join(" ");
+}
+
+/**
+ * 档案的**新增部分** → 工具流条目。
+ *
+ * ⚠ 思考播不了:`thinking` 块在档案里只有 signature,正文是空的
+ *   (22 份档案 360 个块,有正文的 0 个 —— 实测,不是推测)。所以这条流能播的是
+ *   「它动了什么手」,不是「它在想什么」;别给思考留位置,那会变成一排空行。
+ */
+function feedLines(text, ctx) {
+  const out = [];
+  text.split("\n").forEach(function (line) {
+    if (!line) return;
+    let e;
+    try { e = JSON.parse(line); } catch (_) { return; }   // 坏行/半行:跳过。直播层永远 fail-open
+    const m = e && e.message;
+    if (!m || !Array.isArray(m.content)) return;
+    const ts = e.timestamp ? Date.parse(e.timestamp) : 0;
+    if (ctx.sinceMs && ts && ts < ctx.sinceMs) return;    // 坑②:上一局的档案就在同一个目录里
+    m.content.forEach(function (b) {
+      if (!b) return;
+      if (b.type === "tool_use") {
+        if (b.id) { if (ctx.seen.has(b.id)) return; ctx.seen.add(b.id); }   // 坑①:分片重复
+        out.push({ kind: "tool", name: String(b.name || "?"), text: briefOf(b.name, b.input), ts: ts });
+      } else if (b.type === "text" && String(b.text || "").trim()) {
+        out.push({ kind: "text", text: oneLine(b.text), ts: ts });
+      } else if (b.type === "tool_result" && b.is_error) {
+        /* 成功的结果不播:下一条工具行出现就等于上一条跑完了,播了只是把面板灌满
+         * (一次文件读的结果单行 28KB —— 实测)。**失败要播** ——
+         * 角色卡在一条跑不通的命令上,正是最该被人一眼看见的那种「在干活」。 */
+        const k = "e" + (b.tool_use_id || "");
+        if (b.tool_use_id) { if (ctx.seen.has(k)) return; ctx.seen.add(k); }
+        out.push({ kind: "err", text: oneLine(resultText(b.content)), ts: ts });
+      }
+    });
+  });
+  return out;
+}
+
+/** 从 from 字节读到末尾,只回**完整的行** —— 半行是 agent 正在写,留给下次 */
+function readFrom(file, from) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    if (size <= from) return { text: "", next: size };   // 没长/被换了一份:跟着走,绝不倒读
+    const buf = Buffer.allocUnsafe(size - from);
+    const n = fs.readSync(fd, buf, 0, size - from, from);
+    const text = buf.slice(0, n).toString("utf8");
+    const cut = text.lastIndexOf("\n");
+    if (cut < 0) return { text: "", next: from };         // 一行都还没写完:原地等下一拍
+    // 偏移量按**字节**推进(中文一个字三字节);切在换行处,所以被截断的多字节字符
+    // 连同它那半行一起留到下次,不会读出乱码
+    const keep = text.slice(0, cut + 1);
+    return { text: keep, next: from + Buffer.byteLength(keep, "utf8") };
+  } catch (_) { return { text: "", next: from }; }
+  finally { if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} } }
+}
+
+/**
+ * 工具流取数器。跟 createPuller 是同一批文件、同一套认角色规矩,区别在读什么、去哪:
+ *
+ *   createPuller  取 usage 的**数**  → 几十秒一次够了 → **入档**(run.jsonl)
+ *   createFeed    取**动作**        → 1s 级才叫直播  → **不入档**(只推给正在看的人)
+ *
+ * 不入档是定过的账:一份档案 400KB / 153 行,3 角色 × 8 轮就是 ~3700 条、10MB,
+ * 而回环的产出是那二十来条正式发言。原样倒进同一条流,等于用噪音把结论埋了 ——
+ * 服务端内存镜像、每个客户端的断线回放、人眼,三处一起遭。
+ */
+function createFeed(opts) {
+  opts = opts || {};
+  const root = opts.root || rootFor(opts.home, opts.cwd);
+  const sinceMs = opts.sinceMs || 0;
+  const roles = opts.roles || [];
+  const cap = opts.cap || 120;
+  const at = new Map();       // agentId → 读到第几个字节
+  const seen = new Set();     // 块 id(工具调用 / 出错的结果):分片会把同一条消息写好几行
+
+  return {
+    root: root,
+    pull: function (round) {
+      let out = [];
+      listAgents(root).forEach(function (a) {
+        if (a.mtime < sinceMs) return;
+        const role = resolveRole(roles, a.meta);
+        const type = String((a.meta && a.meta.agentType) || "");
+        // 认不出角色、又不是本技能的子 agent → 用户在这个目录下干的别的活,不是这条流的事
+        if (!role && type.indexOf("forge-") !== 0) return;
+        const from = at.has(a.id) ? at.get(a.id) : 0;
+        if (a.size === from) return;                      // 没长就别开文件
+        const got = readFrom(a.file, from);
+        at.set(a.id, got.next);
+        if (!got.text) return;
+        feedLines(got.text, { sinceMs: sinceMs, seen: seen }).forEach(function (x) {
+          out.push(Object.assign({ t: "feed", agent: a.id, role: role || type || null,
+            round: round || 1 }, x));
+        });
+      });
+      out.sort(function (x, y) { return (x.ts || 0) - (y.ts || 0); });
+      if (out.length > cap) {
+        // 截断必须说出来 —— 悄悄丢掉会让面板看起来「一条没漏」,那是这个项目最不能干的事
+        const dropped = out.length - cap;
+        out = out.slice(-cap);
+        out.unshift({ t: "feed", kind: "skip", n: dropped, round: round || 1, ts: out[0].ts });
+      }
+      return out;
+    }
+  };
+}
+
 module.exports = { slugFor: slugFor, rootFor: rootFor, resolveRole: resolveRole,
-  readTotals: readTotals, listAgents: listAgents, createPuller: createPuller,
+  readTotals: readTotals, listAgents: listAgents, createPuller: createPuller, createFeed: createFeed,
+  feedLines: feedLines, readFrom: readFrom, briefOf: briefOf,
   TYPE_KIND: TYPE_KIND };

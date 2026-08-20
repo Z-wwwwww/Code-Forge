@@ -13,6 +13,7 @@ Claude Code 走插件(`/plugin marketplace add` + `/plugin install`,技能会自
 | 判据(`gate.js`)、预算、以及那条「没判过不许说达标」的拒绝(`hostrun.js`) | ✅ | 纯代码,与宿主无关 |
 | 监控台、事件流、`code-forge`(直播) / `usage` | ✅ | 只读事件流,不关心谁在执行 |
 | **逐 agent 用量**(`usage` 事件 / `GET /usage`) | ⚠ | **事件格式通用,采集看适配器**。记账(去重/归属/分轮)在 `usage.js`,解析在各自的 `adapters.parse`。粒度也各不相同:claude 摊得到子 agent,codex 只到「执行者」一行且不报成本。没有适配器的宿主自己 `POST /events` 一条 `usage`(字段见下)。你不报,页面就如实显示「未上报」——**不要为了让表好看而报估算值** |
+| **工具流**(进行中那一轮「此刻在动什么手」) | ⚠ | **看得到档案才播得出来**。Claude Code 给每个子 agent 存了档,服务端逐秒读新增的行(`chatusage.createFeed`)—— 所以不靠角色自报。没有这种档案的宿主(Codex 等)走 `loop_agent`:角色跑在独立进程里,活动行由 `perrole` 直接报成 `run.streaming`(1.5s 节流,**这条是入档的**)。两条都没有的宿主,面板上就只有心跳,不假装有动作 |
 | 纯 HTTP `/host/*` | ✅ | 不装 MCP 也能驱动 |
 | `skills/code-forge/SKILL.md` 的协议与三条纪律 | ✅ | 是文本,贴进任何 agent 的 rules/AGENTS.md 都成立 |
 | **判据命令「候选式确认」** | ✅ | 写在技能里 —— 由**宿主自己**看仓库、自己提 2~4 条候选 |

@@ -206,9 +206,27 @@ function events() {
       round: u.round, in: u.in, out: u.out, cacheRead: u.cr, cacheWrite: u.cw,
       ctx: u.ctx, msgs: u.msgs, tools: u.tools, source: "claude 子 agent 档案" });
   });
-  // 静默看门狗的心跳(hostrun 同款):进行中的轮里「谁在干活」要看得见
+  /* 工具流(hostrun 同款):进行中那一轮里「此刻在动什么手」。
+   * ★ 真跑时这些**不入档** —— 只推给正在看的人(server.js 的 emit)。示例是罐头档案,
+   *   只能靠 append 灌进来才看得见;别照着这里以为线上也往 run.jsonl 里写。
+   * 形状与 chatusage.createFeed 出来的一模一样:kind=tool 时 name 是工具名,
+   * err 是跑不通的命令(成功的结果不播),text 是角色自己说的话。 */
+  const T0 = 1756000000000;
+  [ { kind: "tool", name: "Read", text: "pay.js:88" },
+    { kind: "tool", name: "Grep", text: "event_id  pay.js" },
+    { kind: "tool", name: "Bash", text: "node -e \"require('./pay.js')\" | head" },
+    { kind: "err", text: "Exit code 1  AssertionError: 同一 event_id 第二次仍然入账" },
+    { kind: "text", text: "重放窗口只挡了 5 分钟内的 —— 跨窗口的第二次回调照样进账" },
+    { kind: "tool", name: "Read", text: "pay.js:120" },
+    { kind: "tool", name: "Grep", text: "SELECT .* FROM payments  pay.js" }
+  ].forEach(function (f, i) {
+    out.push(Object.assign({ t: "feed", round: 3, role: "r2", actor: "r2",
+      agent: "agent-demo-c3", ts: T0 + i * 4000 }, f));
+  });
+  // 静默看门狗的心跳:能观察到就报观察(它的档案在长),措辞不带「多半」——
+  // 有工具流之后这才是常态;兜底那句「多半在等实现者修」只在读不到档案时才出现
   out.push({ t: "run.streaming", role: "gate", actor: "r2",
-    text: "第 3 轮 · 距上一条发言已 96s（上一条:实现者「Claim 枚举…」，反驳者多半在复检）" });
+    text: "第 3 轮 · 距上一条发言已 96s（反驳者正在干活 —— 它的档案 3s 前还在更新）" });
   return out;
 }
 

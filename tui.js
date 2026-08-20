@@ -66,6 +66,8 @@ const UI = {
     conflicts: function (n) { return "     这一轮有 " + n + " 处分歧"; },
     ranFor: function (r, s) { return "  跑了 " + r + " 轮" + (s ? "，" + s + " 秒" : ""); },
     inProgressDots: "进行中…",
+    feedSkipped: function (n) { return "… 中间 " + n + " 条动作没跟上（它手比这面板快）"; },
+    feedNote: "此刻在动的手（不入档）",
     unknownEvents: function (n) { return "  ⚠ " + n + " 条认不出的事件（已忽略但计数）"; },
     cutLines: function (n) { return "  … 中间 " + n + " 行放不下（终端高一点，或按 o 看网页）"; },
     keys: [["↑↓", "选轮次"], ["⏎", "展开/收起"], ["esc", "收起全部"],
@@ -107,6 +109,8 @@ const UI = {
     conflicts: function (n) { return "     " + n + " conflicts this round"; },
     ranFor: function (r, s) { return "  ran " + r + " rounds" + (s ? ", " + s + "s" : ""); },
     inProgressDots: "in progress…",
+    feedSkipped: function (n) { return "… " + n + " actions skipped (it works faster than this panel)"; },
+    feedNote: "live actions (not archived)",
     unknownEvents: function (n) { return "  ⚠ " + n + " unrecognized events (ignored but counted)"; },
     cutLines: function (n) { return "  … " + n + " middle lines don't fit (taller terminal, or press o for web)"; },
     keys: [["↑↓", "round"], ["⏎", "open/close"], ["esc", "close all"],
@@ -186,7 +190,7 @@ function newState() {
    *   Object.keys(newState()) 逐键复位 —— 漏一个键,旧局的值就活进新局。
    *   实测:streaming 没列,新局 R1 挂着上一局的「第 2 轮 · 距上一条发言已 593s」。 */
   return { run: null, roles: {}, roleOrder: [], rounds: [], byN: {}, ended: null, count: 0, unknown: 0,
-    usageEvents: [], streaming: null };
+    usageEvents: [], streaming: null, feed: [], feedRound: 0 };
 }
 function reduce(st, ev) {
   st.count++;
@@ -246,6 +250,15 @@ function reduce(st, ev) {
     }
     case "run.end": st.ended = ev; break;
     case "run.streaming": st.streaming = ev; break;
+    /* 工具流:**易失**,只描述此刻。换轮就整批扔掉 —— 这条流的价值全在「正在」,
+     * 上一轮的 Grep 留在屏幕上只会让人以为它还在找。上限 200 条:面板只画得下十来行,
+     * 留一点余量给往回看,再多就是白占内存(它不入档,扔了也不算丢档案)。 */
+    case "feed": {
+      if (st.feedRound !== ev.round) { st.feed = []; st.feedRound = ev.round; }
+      st.feed.push(ev);
+      if (st.feed.length > 200) st.feed = st.feed.slice(-200);
+      break;
+    }
     case "patch": (round(ev.round || 1).patches = round(ev.round || 1).patches || []).push(ev); break;
     // 用量原样收着,汇总在渲染时现算 —— 与网页、`code-forge usage` 共用 usage.reduceEvents,
     // 三个地方算出三个不一样的总数是最难查的那种 bug
@@ -256,6 +269,9 @@ function reduce(st, ev) {
 }
 
 /* ---------------- 渲染（纯函数,可单测） ---------------- */
+/* 工具流在进行中那一轮里画几行。十来行是「看得清此刻」和「不把聊天记录挤走」的平衡点 ——
+ * 再多也没用:fitHeight 会从中间挖掉,挖掉的正是刚发生的那几条。 */
+const FEED_ROWS = 8;
 function bar(width, ch) { return new Array(Math.max(0, width)).join(ch || "─"); }
 function clip(s, n) {
   s = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
@@ -758,6 +774,33 @@ function renderLines(st, width, view) {
             : pch.st === "bad" ? C.red(pch.state) : C.yellow(pch.state)) : "") +
           (pch.tests && pch.tests !== pch.state ? C.dim("  " + pch.tests) : "") });
       });
+      /* ★ 工具流:进行中那一轮的末尾,把「此刻在动什么手」按时间顺序摊开。
+       *   为什么在这儿:心跳只有一行、90s 才响一声,回答的是「还活着吗」;
+       *   人要的是「在干什么」。这些行**不入档**(易失,见 server.js 的 emit),
+       *   所以只画进行中的轮 —— 回放旧档案时它本来就不存在。
+       *   角色名只在换人时打一次:一排重复的名字会把本来就窄的正文挤没。 */
+      if (r.live && !st.ended && st.feed && st.feed.length) {
+        let prevRole = null;
+        st.feed.slice(-FEED_ROWS).forEach(function (f) {
+          const rid = f.actor && st.roles[f.actor] ? f.actor : null;
+          let head = "";
+          if (rid && rid !== prevRole) {
+            const ridx = st.roleOrder.indexOf(rid);
+            const rcol = ROLE_COLORS[(ridx < 0 ? 0 : ridx) % ROLE_COLORS.length];
+            head = rcol(C.bold(st.roles[rid].name)) + C.dim(" │ ");
+          } else if (rid) {
+            head = "".padEnd(dispWidth(st.roles[rid].name) + 3, " ");   // 对齐到上一行的名字之后
+          }
+          prevRole = rid || prevRole;
+          const wid = W - 22 - (rid ? dispWidth(st.roles[rid].name) : 0);
+          let body;
+          if (f.kind === "skip") body = C.yellow(T.feedSkipped(f.n));
+          else if (f.kind === "err") body = C.red("✗ " + clip(f.text, wid));
+          else if (f.kind === "text") body = C.dim("· " + clip(f.text, wid));
+          else body = C.dim("→ ") + C.teal(f.name || "?") + C.dim(" " + clip(f.text, wid));
+          L.push({ inRound: r.n, text: "       " + head + body });
+        });
+      }
       // ★ 进行中的轮在聊天记录末尾挂一条**实时活动行**(带脉搏) ——
       //   展开的轮里要能看到「此刻哪个角色在干什么」,不用低头去找底栏
       if (r.live && !st.ended && st.streaming && st.streaming.text) {
@@ -1160,6 +1203,10 @@ function watch(base, opts) {
         lastEventAt = Date.now();
         if ((ev.t === "run.streaming" || ev.t === "event") && ev.role && ev.role !== "gate") {
           activeRole = ev.role; activeAt = Date.now();
+        } else if (ev.t === "feed" && ev.actor) {
+          // 工具流带的 actor 是**观察**出来的(它的档案这一秒真的在长),
+          // 脉搏吃它最准 —— 比心跳那个「按上一条是谁说的推」的 actor 强一个档
+          activeRole = ev.actor; activeAt = Date.now();
         } else if (ev.t === "run.streaming" && ev.actor) {
           // 心跳带的 actor:长派发期间角色表的脉搏不再因 3 分钟窗口过期而消失
           activeRole = ev.actor; activeAt = Date.now();

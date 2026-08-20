@@ -212,6 +212,32 @@ function append(events) {
   return list.length;
 }
 
+/**
+ * **易失**通道:只推给此刻正在看的客户端 —— 不写 run.jsonl、不进内存镜像、**不占 SSE id**。
+ *
+ * 为什么另开一条:工具流(角色每一次 Bash/Read/Grep)是「掌控此刻」的料,不是档案。
+ * 一份子 agent 档案 400KB / 153 行,3 角色 × 8 轮 ~3700 条 —— 入档会同时压垮三处:
+ * 磁盘上的档案、这个进程常驻的 log 数组(每个新客户端连上还要按 id 回放一遍)、
+ * 以及人眼(那二十来条正式发言会被 3700 条工具行埋掉)。
+ *
+ * 不写 `id:` 是关键:SSE 的 id 是 log 的下标,断线重连靠 Last-Event-ID 续传。
+ * 易失帧不带 id,浏览器的 lastEventId 就不会被它顶走 —— 重连时回放的仍是完整的档案。
+ * 没人在看就直接不推(也就没人会「错过」—— 它本来就只描述此刻)。
+ */
+function emit(events) {
+  if (!clients.size) return 0;
+  const list = (Array.isArray(events) ? events : [events]).filter((e) => e && typeof e === "object");
+  list.forEach((e) => {
+    const frame = "data: " + JSON.stringify(e) + "\n\n";
+    clients.forEach((res) => res.write(frame));
+  });
+  return list.length;
+}
+/* 有人在看吗。工具流靠它决定要不要去读档案 —— 回环跑一小时、人看几分钟是常态,
+ * 没观众时连 readdir 都不该发生。偏移量因此停在原地:等有人连上来,第一拍会把
+ * 「攒下来的最近一批」一次推出去(超了就带上「中间 N 条没跟上」),正是新观众要看的。 */
+emit.wanted = function () { return clients.size > 0; };
+
 /* ---------------- HTTP ---------------- */
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8" };
@@ -429,7 +455,7 @@ const server = http.createServer((req, res) => {
 
 /* ---------------- 小工具 ---------------- */
 const run = { active: false, ctl: null, startedAt: 0, lastReason: null };   // 本地驱动(自带 key,可选)
-const host = require("./hostrun.js").create(append);                        // 宿主驱动(默认,零 key)
+const host = require("./hostrun.js").create(append, emit);                        // 宿主驱动(默认,零 key)
 // 自己的地址要能传给页面起的那个 claude —— 它拉起的 MCP server 继承这个环境变量,
 // 于是两边一定指向同一个监控台(端口被占用自动 +1 的情况下尤其要紧)
 let SELF_URL = null;
