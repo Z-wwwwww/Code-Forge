@@ -2054,12 +2054,29 @@ async function testChatUsage() {
   assert.ok(/quietTimer = setInterval[\s\S]{0,700}pullChatUsage\(\)/.test(hostSrc),
     "★ 静默看门狗的心跳里要 pullChatUsage —— 角色干活期间账也得动");
 
-  // ★ 网页排行与 TUI 同口径:条长/排序/头号数字都含缓存,分段=真进出/缓存
+  // ★ 网页排行与 TUI 同口径:排序/头号数字走 roleTot(优先末次上下文)
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   assert.ok(/function roleTot\(r\)/.test(html) && /ctxBy/.test(html),
     "★ 网页角色总数走 roleTot:优先末次上下文(Claude Code 同口径),老事件退回含缓存累计");
   assert.ok(/roleTot\(r\)/.test(html) && /tot0 = roleTot/.test(html),
     "★ 页头总计与左栏角色卡必须共用 roleTot —— 各算各的迟早再撞一次口径(实测 31.2k vs 10.65M 同屏)");
+
+  /* ★ 图例必须顶得住条里真画的东西。
+   *   踩过的:图例写着「输入/输出」,而两段实际分的是「真进出 / 上下文里的缓存」——
+   *   两个口径(累计 vs 快照)相除出来的百分比谁也说不出是什么,读图的人无从发现。
+   *   现在:上条 输入|输出(都来自 inTok/outTok),下条 缓存(cacheRead+cacheWrite),
+   *   各自比最大值 —— 因为缓存比真进出大一两个量级(实测 1.53M vs 60.5k),
+   *   同一把尺下输入输出只剩 1% 的细线,等于没画。 */
+  assert.ok(/legIn:/.test(html) && /legOut:/.test(html) && /legCache:/.test(html),
+    "★ 三段都要有名字:输入 / 输出 / 缓存(中英各一份)");
+  assert.ok(/liveW \* r\.inTok \/ live/.test(html) && /wOut = Math\.max\(0, liveW - wIn\)/.test(html),
+    "★ 「输入」段必须真来自 inTok、「输出」段是其余 —— 图例说什么,条里就得画什么");
+  assert.ok(/wCache = \(cacheTok \/ maxCache\) \* 100/.test(html) && /maxCache = Math\.max/.test(html),
+    "★ 缓存另起一条、另一把尺(比各角色里最大的缓存),否则真进出被压成看不见的细线");
+  assert.ok(/legScale:/.test(html) && /两条各自比最大值/.test(html) && /each row scaled to its own max/.test(html),
+    "★ 「两条各自比最大值」要写在图例上 —— 两把尺不说出来就是另一种误导");
+  assert.ok(/liveTip:/.test(html) && /cacheTip:/.test(html) && /totTipCtx:/.test(html),
+    "★ 三处 tooltip:两条各自的真数、大数字的口径(上下文快照,不是累加值)");
 
   /* ★ UI 预览要零回环可用(用户点名:每次看效果都要启动真回环,太费 token):
    *   preview 子命令 = 示例档案 + 私有端口 + 不抢全局端口文件;

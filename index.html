@@ -127,13 +127,16 @@ button{font-family:inherit;color:inherit}
 .rank .nm{font-size:11.5px;font-weight:500;color:var(--tx-2)}
 .rank .tot{font-family:var(--mono);font-size:11px;color:var(--tx-5)}
 .rank .bar{display:block;height:5px;border-radius:3px;background:#171B21;overflow:hidden;position:relative}
-.rank .bar i,.rank .bar u{position:absolute;top:0;bottom:0;display:block}
+.rank .bar i,.rank .bar u,.rank .bar b{position:absolute;top:0;bottom:0;display:block}
+/* 缓存那条:细一半、暗下去 —— 它是「复用的」,不该跟真花的钱抢注意力 */
+.rank .bar.cache{height:3px;margin-top:2px;background:#141821}
+.rank .bar.cache b{opacity:.3}
+.legend i.ca{opacity:.3;height:3px}
+.legend .sc{color:var(--tx-10)}
 .rank .foot{display:flex;gap:10px;font-family:var(--mono);font-size:9.5px;color:var(--tx-8)}
 .legend{display:flex;gap:12px;margin-top:12px;font-size:9.5px;color:var(--tx-8);font-family:var(--mono)}
 .legend span{display:flex;align-items:center;gap:5px}
 .legend i{width:14px;height:5px;border-radius:3px;background:var(--acc)}
-
-/* models */
 
 /* ---------------- main ---------------- */
 main{min-width:0;height:calc(100vh - 56px);overflow-y:auto;background:var(--bg)}
@@ -338,7 +341,12 @@ var L10N = {
     notYet: "本回环还没轮到它", noUsageYet: "暂无用量（干完活才有账）",
     cacheAcc: "缓存重读累计 ",
     secRounds: "轮次 ROUNDS", secTok: "TOKEN 消耗排行", secScope: "全会话",
-    legIn: "输入", legOut: "输出",
+    legIn: "输入", legOut: "输出", legCache: "缓存",
+    liveTip: function(i,o){ return "真花出去的 token（累计）：输入 " + i + " · 输出 " + o + "。条长按各角色里最大的那个算"; },
+    cacheTip: function(c){ return "缓存读+写（累计）" + c + "：复用命中的部分，比真进出大一两个量级，所以另起一条、另一把尺"; },
+    legScale: "两条各自比最大值",
+    totTipCtx: "上下文规模：各 agent 末次调用的上下文之和（Claude Code 屏上同一把尺）。不是累加值",
+    totTipSum: "含缓存的累计用量（这些事件没报上下文规模，只能退回累加）",
     secConf: "本轮分歧点 CONFLICTS", secPatch: "代码演进 PATCH TRAIL",
     all: "全部", targets: "针对", waitNext: "等待下一个事件…", thisRound: "本轮",
     feedNote: "此刻在动的手 · 不入档", feedSkipped: function(n){ return "… 中间 "+n+" 条动作没跟上（它手比这面板快）"; },
@@ -380,7 +388,12 @@ var L10N = {
     notYet: "not its turn yet this loop", noUsageYet: "no usage yet (accounts appear after it works)",
     cacheAcc: "cache re-reads (cumulative) ",
     secRounds: "ROUNDS", secTok: "TOKEN RANKING", secScope: "whole session",
-    legIn: "input", legOut: "output",
+    legIn: "input", legOut: "output", legCache: "cache",
+    liveTip: function(i,o){ return "tokens actually spent (cumulative): input " + i + " · output " + o + ". Bar length is relative to the largest role"; },
+    cacheTip: function(c){ return "cache reads + writes (cumulative) " + c + ": the reused part - one or two orders of magnitude bigger than real spend, hence its own row and its own scale"; },
+    legScale: "each row scaled to its own max",
+    totTipCtx: "context size: sum of each agent's last-call context (same basis Claude Code shows). Not a cumulative total",
+    totTipSum: "cumulative usage incl. cache (these events never reported a context size, so this falls back to summing)",
     secConf: "CONFLICTS THIS ROUND", secPatch: "PATCH TRAIL",
     all: "all", targets: "targets", waitNext: "waiting for the next event…", thisRound: "this round",
     feedNote: "live actions · not archived", feedSkipped: function(n){ return "… "+n+" actions skipped (it works faster than this panel)"; },
@@ -692,13 +705,29 @@ function renderRanking(){
    *   是它当前的上下文规模,这里必须同一把尺。老事件没报 ctx 时才退回含缓存累计。 */
   var tot0 = roleTot;   // 与页头总计同一把尺 —— 两处各算各的迟早再撞一次口径
   var max = Math.max.apply(null, rs.map(tot0).concat([1]));
+  /* ★ 一条里塞不下这三个数:缓存读写动辄是真进出的 20~50 倍(实测 1.53M vs 60.5k)——
+   *   同一把尺下输入输出只剩 1% 的细线,等于没画。所以**两条,各自比最大值**:
+   *   上条 输入|输出(真花出去的),下条 缓存(复用的)。谁跟谁比得出来,才叫表示清楚。 */
+  var maxLive = Math.max.apply(null, rs.map(function(r){ return r.inTok + r.outTok; }).concat([1]));
+  var maxCache = Math.max.apply(null,
+    rs.map(function(r){ return (r.cacheRead || 0) + (r.cacheWrite || 0); }).concat([1]));
   return rs.slice().sort(function(a,b){ return tot0(b) - tot0(a); }).map(function(r){
-    var live = r.inTok + r.outTok;
     var total = tot0(r);
+    var cacheTok = (r.cacheRead || 0) + (r.cacheWrite || 0);
     var w = (total / max) * 100;
-    // 亮段:真进出;暗段:其余(上下文里的缓存部分)。live 可能大于 ctx 口径的 total,夹一下
-    var inPct = (PROPS.showTokenSplit && total) ? Math.min(w, w * live / total) : 0;
-    var outPct = (PROPS.showTokenSplit && total) ? Math.max(0, w - inPct) : w;
+    /* 条长 = 相对第一名(口径同大数字);条内三段 = 这笔账的**累计构成**。
+     * 为何不拿大数字当分母:它是上下文快照(末次调用),而 in/out/缓存是累计 ——
+     * 两个口径相除出来的百分比不代表任何东西(上一版就这么算,图例因此标错了:
+     * 写着「输入/输出」,实际分的是「真进出/缓存」)。现在段内比例自成一体:
+     * 输入 : 输出 : 缓存读写,三段相加就是整条。 */
+    var live = r.inTok + r.outTok;
+    // 大数字用的是哪把尺(跟 roleTot 同一条判断):上下文快照,还是退回累加
+    var ctxSum = 0; if (r.ctxBy) { for (var ck in r.ctxBy) ctxSum += r.ctxBy[ck]; }
+    var ctxBased = ctxSum > 0;
+    var liveW = (live / maxLive) * 100;
+    var wIn = (PROPS.showTokenSplit && live) ? liveW * r.inTok / live : 0;
+    var wOut = Math.max(0, liveW - wIn);
+    var wCache = (cacheTok / maxCache) * 100;
     var op = (!state.roleFilter || state.roleFilter === r.id) ? "1" : "0.4";
     // 宿主执行:没有任何一次调用报得出用量 → 整行如实标「不可得」,不画一条假的 0 长度条
     var unknown = !total && r.tokUnknown > 0;
@@ -718,12 +747,17 @@ function renderRanking(){
         '<span class="sw" style="background:' + r.color + '"></span>' +
         '<span class="nm">' + esc(r.name) + "</span>" +
         '<span class="grow"></span>' +
-        '<span class="tot">' + (silent ? WT().silent : unknown ? WT().says(r.calls) : k1(total)) + "</span>" +
+        '<span class="tot"' + (silent || unknown ? "" :
+          ' title="' + esc(ctxBased ? WT().totTipCtx : WT().totTipSum) + '"') + ">" +
+          (silent ? WT().silent : unknown ? WT().says(r.calls) : k1(total)) + "</span>" +
       "</span>" +
       (unknown || silent ? "" :
-        '<span class="bar">' +
-          '<i style="left:0;width:' + inPct.toFixed(1) + "%;background:" + r.color + ';opacity:.38"></i>' +
-          '<u style="left:' + inPct.toFixed(1) + "%;width:" + outPct.toFixed(1) + "%;background:" + r.color + '"></u>' +
+        '<span class="bar" title="' + esc(WT().liveTip(k1(r.inTok), k1(r.outTok))) + '">' +
+          '<i style="left:0;width:' + wIn.toFixed(1) + "%;background:" + r.color + ';opacity:.45"></i>' +
+          '<u style="left:' + wIn.toFixed(1) + "%;width:" + wOut.toFixed(1) + "%;background:" + r.color + '"></u>' +
+        "</span>" +
+        '<span class="bar cache" title="' + esc(WT().cacheTip(k1(cacheTok))) + '">' +
+          '<b style="left:0;width:' + wCache.toFixed(1) + "%;background:" + r.color + '"></b>' +
         "</span>") +
       '<span class="foot">' +
         (silent ? "<span>" + WT().notYet + "</span>"
@@ -746,7 +780,14 @@ function renderLeft(){
       '<div class="blk-rank">' +
         '<div class="blk-head"><span class="seclab">' + WT().secTok + '</span><span class="scope">' + WT().secScope + "</span></div>" +
         '<div class="rank">' + renderRanking() + "</div>" +
-        '<div class="legend"><span><i style="opacity:.38"></i>' + WT().legIn + "</span><span><i></i>" + WT().legOut + "</span></div>" +
+        /* 图例必顶真实的三段 —— 上一版写着「输入/输出」而条里分的是「真进出/缓存」,
+           读图的人无从发现。透明度与条内一一对应。 */
+        '<div class="legend">' +
+          '<span><i style="opacity:.45"></i>' + WT().legIn + "</span>" +
+          "<span><i></i>" + WT().legOut + "</span>" +
+          '<span><i class="ca"></i>' + WT().legCache + "</span>" +
+          '<span class="sc">' + WT().legScale + "</span>" +
+        "</div>" +
       "</div>" +
     "</aside>";
 }
