@@ -41,6 +41,7 @@ if (flag("help") || flag("h")) {
   (不带参数)        只打这份指引，什么都不执行
   watch             回放档案并接上直播（回环开跑时会自动弹这个窗口;--web 同时弹浏览器）
   web               起监控台 + 弹浏览器（--port/--demo/--no-open 照常认）
+  preview           改 UI 用:示例档案+私有端口,零回环零模型调用;网页刷新即新,TUI 重开即新
   usage             逐 agent 用量：谁烧了多少、每一轮各花了多少、用了哪些工具
   doctor            MCP 接没接好、哪个 coding agent 里能用
   mousetest         直播点不动时用它：分清是终端不上报鼠标，还是没接住
@@ -113,7 +114,24 @@ console.log([
   ].join(String.fromCharCode(10)));
   return;
 }
-if (argv[0] === "web") {
+if (argv[0] === "preview") {
+  /* ★ UI 预览:**零回环、零模型调用**地看/改两个观察面(用户点名:每次看效果都要
+   * 启动真回环,太费 token)。示例档案 + 私有端口 + --no-port-file,不打扰真回环。
+   * 网页:改 index.html 后浏览器刷新即是新的(每次请求都从磁盘读)。
+   * TUI:按下面打印的 watch 命令另开一个终端;改 tui.js 后 q 掉重开即是新的。 */
+  argv.splice(0, 1);
+  ["--demo", "--reset", "--no-port-file"].forEach(function (f) { if (!argv.includes(f)) argv.push(f); });
+  if (!argv.includes("--port")) argv.push("--port", "4650");
+  if (!argv.includes("--file")) {
+    argv.push("--file", path.join(require("os").tmpdir(), "cf-preview.jsonl"));
+  }
+  console.log("UI 预览（示例档案,零模型调用）");
+  console.log("  网页  改 index.html → 浏览器刷新即生效");
+  console.log("  TUI   另开终端跑:node " + path.join(__dirname, "tui.js") +
+    " watch --url http://localhost:" + argv[argv.indexOf("--port") + 1] +
+    "   （改 tui.js → q 退出重跑即生效）");
+}
+else if (argv[0] === "web") {
   argv.splice(0, 1);          // 剩下的照旧交给监控台(--port/--demo/… 都还认)
 }
 else if (argv[0] === "watch" || argv[0] === "usage" ||

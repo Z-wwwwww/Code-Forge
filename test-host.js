@@ -1816,6 +1816,21 @@ async function testChatUsage() {
     "★ 网页角色总数走 roleTot:优先末次上下文(Claude Code 同口径),老事件退回含缓存累计");
   assert.ok(/roleTot\(r\)/.test(html) && /tot0 = roleTot/.test(html),
     "★ 页头总计与左栏角色卡必须共用 roleTot —— 各算各的迟早再撞一次口径(实测 31.2k vs 10.65M 同屏)");
+
+  /* ★ UI 预览要零回环可用(用户点名:每次看效果都要启动真回环,太费 token):
+   *   preview 子命令 = 示例档案 + 私有端口 + 不抢全局端口文件;
+   *   示例档案必须覆盖**新用量形状**(ctx 快照 + 缓存增量) —— 不覆盖,改用量 UI 还是得跑真回环。 */
+  const srvPrev = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  assert.ok(/argv\[0\] === "preview"/.test(srvPrev) &&
+    /preview[\s\S]{0,900}--no-port-file/.test(srvPrev) && /preview[\s\S]{0,900}--demo/.test(srvPrev),
+    "★ preview 子命令:--demo + --no-port-file + 私有端口,零模型调用地看两个观察面");
+  const demoEvs = require("./demo.js").events();
+  assert.ok(demoEvs.some(function (e) {
+    return e.t === "usage" && e.ctx != null && e.cacheRead > 0 && e.agent && e.model;
+  }), "★ 示例档案要带新用量形状(ctx 快照+缓存增量+agent id+模型) —— 预览才看得到账目区");
+  const demoCritics = demoEvs.filter(function (e) { return e.t === "usage" && e.role === "批判者"; });
+  assert.ok(new Set(demoCritics.map(function (e) { return e.agent; })).size >= 2,
+    "★ 示例里同名角色要有两个 agent —— 排行合并、轮内账分开这两条预览里才看得见");
   // ★ 网页的 k1 要有 M 档(tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
   //   实测「13980.0k」被当成数字算错了报 bug,其实只是格式化只认 k
   assert.ok(/function k1\(n\)\{[^\n]*1e6[^\n]*M/.test(html),

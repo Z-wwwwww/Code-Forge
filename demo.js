@@ -200,6 +200,23 @@ function events() {
       out.push({ t: "round.end", n: rd.n, winner: rd.winner, winnerRole: rd.winnerRole, score: rd.score });
     }
   });
+  /* 用量事件(聊天路径 chatusage 造出来的形状):in/out/缓存是**增量**会被下游累加,
+   * ctx 是**末次上下文快照**取最新不累加 —— 预览不覆盖这个形状,改用量 UI 就得跑真回环。
+   * 同名角色给两个 agent(批判者),排行合并、逐 agent 的轮内账分开这两条都能看到。 */
+  [
+    { agent: "agent-demo-p1", role: "提案者", type: "forge-proposer", model: "claude-opus-4",
+      round: 1, in: 34, out: 3100, cr: 820000, cw: 41000, ctx: 96000, msgs: 6, tools: { Read: 9, Edit: 4 } },
+    { agent: "agent-demo-c1", role: "批判者", type: "forge-critic", model: "gpt-5-codex",
+      round: 1, in: 21, out: 4200, cr: 1140000, cw: 52000, ctx: 118000, msgs: 8, tools: { Read: 14, Grep: 6 } },
+    { agent: "agent-demo-c2", role: "批判者", type: "forge-critic", model: "gpt-5-codex",
+      round: 2, in: 8, out: 1600, cr: 430000, cw: 18000, ctx: 64000, msgs: 3, tools: { Read: 5, Grep: 3 } },
+    { agent: "agent-demo-t1", role: "测试者", type: "forge-reviewer", model: "gpt-5-mini",
+      round: 2, in: 12, out: 2000, cr: 610000, cw: 22000, ctx: 87000, msgs: 5, tools: { Bash: 7, Read: 4 } }
+  ].forEach(function (u) {
+    out.push({ t: "usage", agent: u.agent, role: u.role, agentType: u.type, model: u.model,
+      round: u.round, in: u.in, out: u.out, cacheRead: u.cr, cacheWrite: u.cw,
+      ctx: u.ctx, msgs: u.msgs, tools: u.tools, source: "claude 子 agent 档案" });
+  });
   out.push({ t: "run.streaming", role: "judge", text: "正在生成第 4 轮反驳…" });
   return out;
 }
