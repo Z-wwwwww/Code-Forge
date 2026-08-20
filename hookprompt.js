@@ -28,11 +28,13 @@ process.stdin.on("end", function () {
   if (!/^\/code-forge\s*$/.test(prompt.trim())) process.exit(0);
 
   process.stdout.write([
-    "[code-forge 钩子] 用户打了 /code-forge 但没写目标。你的这一个回合**只做一件事:等目标**。",
-    "- 这段对话里刚讨论过具体问题:调 AskUserQuestion(header「目标」),把它凝成 1~2 条候选目标",
-    "  当选项(用户也能选 Other 自己打)。",
-    "- 没有现成上下文:只输出一行「目标：要做什么？一句话说清」,然后停,等用户下一条消息。",
-    "禁止:扫仓库、找判据、列菜单、解释工作原理、调 loop_begin。目标立住之前这些都不许发生。"
+    "[code-forge hook] The user typed /code-forge with no goal. This turn, do exactly one thing: wait for the goal.",
+    "- If this conversation just discussed a concrete problem: call AskUserQuestion (header: goal) with 1-2",
+    "  candidate goals distilled from it (the component has a built-in Other for free input).",
+    "- No usable context: output a single line asking what to do, in one sentence, in the user's language",
+    "  (e.g. Chinese: 目标：要做什么？一句话说清), then stop and wait for the next message.",
+    "Forbidden until the goal is set: scanning the repo, picking gate commands, listing menus,",
+    "explaining how this works, or calling loop_begin."
   ].join("\n"));
   process.exit(0);                            // 0 = 放行;stdout 进模型上下文
 });

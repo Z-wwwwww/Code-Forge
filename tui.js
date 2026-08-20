@@ -33,18 +33,95 @@ const KIND_LABEL = {
   propose: "PROPOSE", attack: "ATTACK", defend: "DEFEND", verdict: "VERDICT",
   patch: "PATCH", test: "TEST", audit: "AUDIT", route: "ROUTE"
 };
-const STOP_LABEL = {
-  // ★ 达标有两种,显示上必须分得清:命令判过是可复现的,评审判定不是
-  goal_met: "达标停止（命令判过）",
-  judged_met: "达标停止（评审判定）",
-  reported_met: "达标停止（角色上报的指标）",
-  interrupted: "中断（上一局没收尾就断了 —— 已补账,不是还在跑）",
-  idle_spin: "空跑（没人真的改过东西）",
-  stalled: "停滞（角色进程卡住）",
-  judge_broken: "评审判据本身失败", budget_rounds: "轮数用完", budget_time: "超出时限",
-  no_progress: "连续零进展", stopped: "手动停止", gate_broken: "判据本身失败",
-  abandoned: "agent 放弃", driver_error: "驱动异常", budget_tokens: "TOKEN 用尽"
+/* ★ 双语 UI 词典(用户点名:UI 文字跟用户对话的语言)。lang 来自 run.start 事件
+ * (loop_begin 按对话语言带来);没有 lang 的旧档案落回 zh。
+ * ★ 达标有两种,显示上必须分得清:命令判过是可复现的,评审判定不是。 */
+const UI = {
+  zh: {
+    stop: {
+      goal_met: "达标停止（命令判过）", judged_met: "达标停止（评审判定）",
+      reported_met: "达标停止（角色上报的指标）",
+      interrupted: "中断（上一局没收尾就断了 —— 已补账,不是还在跑）",
+      idle_spin: "空跑（没人真的改过东西）", stalled: "停滞（角色进程卡住）",
+      judge_broken: "评审判据本身失败", budget_rounds: "轮数用完", budget_time: "超出时限",
+      no_progress: "连续零进展", stopped: "手动停止", gate_broken: "判据本身失败",
+      abandoned: "agent 放弃", driver_error: "驱动异常", budget_tokens: "TOKEN 用尽"
+    },
+    roundN: function (n) { return "第 " + n + " 轮"; },
+    running: "运行中", roundOf: function (n, m) { return " · 第 " + n + (m ? "/" + m : "") + " 轮"; },
+    notStarted: "（还没开局）",
+    kGoal: "目标", kGate: "判据", kBudget: "预算", kRoles: "角色", kRounds: "轮次", kUsage: "用量",
+    pass: "过", fail: "未过",
+    unlimitedRounds: "不限轮", nRounds: function (n) { return n + " 轮"; },
+    tokBudget: function (k) { return "token " + k; }, tokUnlimited: "token 不限",
+    noProgressStop: function (n) { return "零进展 " + n + " 轮停"; },
+    calls: function (n) { return n + " 次"; }, silent: "未发言",
+    ctxLabel: "上下文", cacheLabel: "含缓存",
+    clickHint: "　点一行看那一轮", roundsCount: function (n) { return n + " 轮"; },
+    events: function (n) { return n + " 事件"; }, inProgress: "进行中",
+    elided: function (n) { return "     … 前 " + n + " 条略"; },
+    toolFail: "（失败)",
+    summaryOnly: "（这条只带了 summary —— body/tool/diff 都没报）",
+    usageInline: "     用量 ",
+    conflicts: function (n) { return "     这一轮有 " + n + " 处分歧"; },
+    ranFor: function (r, s) { return "  跑了 " + r + " 轮" + (s ? "，" + s + " 秒" : ""); },
+    inProgressDots: "进行中…",
+    unknownEvents: function (n) { return "  ⚠ " + n + " 条认不出的事件（已忽略但计数）"; },
+    cutLines: function (n) { return "  … 中间 " + n + " 行放不下（终端高一点，或按 o 看网页）"; },
+    keys: [["↑↓", "选轮次"], ["⏎", "展开/收起"], ["esc", "收起全部"],
+      ["f", "跟最新"], ["s", "停止"], ["o", "网页"], ["q", "退出"]],
+    stickBottom: "（跟底）", scrollHint: "（滚轮/PgUp 翻,f 跟回）",
+    archive: "■ 档案", lastEvent: " 最后事件 ",
+    justNow: "刚刚", secAgo: function (n) { return n + "s 前"; }, minAgo: function (n) { return n + "m 前"; },
+    parked: function (n) { return "   （已停在 R" + n + "，按 f 跟回最新）"; },
+    endedArchive: "   这是已结束的档案 —— 新开跑: /code-forge（聊天里）",
+    quit: "已退出。回环仍在后台跑,`code-forge watch` 可以再接回来。",
+    replayBanner: "观察面:回放档案并接上直播。开跑在 coding agent 里: /code-forge <目标>"
+  },
+  en: {
+    stop: {
+      goal_met: "Stopped: goal met (command)", judged_met: "Stopped: goal met (judge)",
+      reported_met: "Stopped: goal met (role-reported metric)",
+      interrupted: "Interrupted (previous run never wrapped up — reconciled, not still running)",
+      idle_spin: "Idle spin (nothing was actually changed)", stalled: "Stalled (role process hung)",
+      judge_broken: "Judge gate itself failed", budget_rounds: "Out of rounds", budget_time: "Time limit exceeded",
+      no_progress: "No progress", stopped: "Stopped manually", gate_broken: "Gate itself failed",
+      abandoned: "Agent gave up", driver_error: "Driver error", budget_tokens: "Token budget exhausted"
+    },
+    roundN: function (n) { return "Round " + n; },
+    running: "running", roundOf: function (n, m) { return " · round " + n + (m ? "/" + m : ""); },
+    notStarted: "(not started)",
+    kGoal: "Goal", kGate: "Gate", kBudget: "Budget", kRoles: "Roles", kRounds: "Rounds", kUsage: "Usage",
+    pass: "pass", fail: "fail",
+    unlimitedRounds: "unlimited rounds", nRounds: function (n) { return n + " rounds"; },
+    tokBudget: function (k) { return "tokens " + k; }, tokUnlimited: "tokens unlimited",
+    noProgressStop: function (n) { return "stop after " + n + " no-progress rounds"; },
+    calls: function (n) { return n + "x"; }, silent: "silent",
+    ctxLabel: "context", cacheLabel: "w/cache",
+    clickHint: "  click a row to open that round", roundsCount: function (n) { return n + " rounds"; },
+    events: function (n) { return n + " events"; }, inProgress: "in progress",
+    elided: function (n) { return "     … " + n + " earlier omitted"; },
+    toolFail: " (failed)",
+    summaryOnly: "(summary only — no body/tool/diff reported)",
+    usageInline: "     usage ",
+    conflicts: function (n) { return "     " + n + " conflicts this round"; },
+    ranFor: function (r, s) { return "  ran " + r + " rounds" + (s ? ", " + s + "s" : ""); },
+    inProgressDots: "in progress…",
+    unknownEvents: function (n) { return "  ⚠ " + n + " unrecognized events (ignored but counted)"; },
+    cutLines: function (n) { return "  … " + n + " middle lines don't fit (taller terminal, or press o for web)"; },
+    keys: [["↑↓", "round"], ["⏎", "open/close"], ["esc", "close all"],
+      ["f", "follow"], ["s", "stop"], ["o", "web"], ["q", "quit"]],
+    stickBottom: " (following)", scrollHint: " (wheel/PgUp to scroll, f to follow)",
+    archive: "■ archive", lastEvent: " last event ",
+    justNow: "just now", secAgo: function (n) { return n + "s ago"; }, minAgo: function (n) { return n + "m ago"; },
+    parked: function (n) { return "   (parked at R" + n + ", press f to follow)"; },
+    endedArchive: "   this run has ended — start a new one: /code-forge (in chat)",
+    quit: "Exited. The loop keeps running in the background; `code-forge watch` reattaches.",
+    replayBanner: "Observer: replaying the archive, then live. Start runs from a coding agent: /code-forge <goal>"
+  }
 };
+function uiT(lang) { return UI[String(lang || "zh").toLowerCase()] || UI.zh; }
+const STOP_LABEL = UI.zh.stop;   // 旧名字保留:usageReport 等 zh-only 场合还引用它
 
 /* ---------------- 找监控台（与 mcp.js 同一套三级发现） ---------------- */
 function discoverBase() {
@@ -122,7 +199,7 @@ function reduce(st, ev) {
   };
   const round = function (n) {
     if (!st.byN[n]) {
-      st.byN[n] = { n: n, title: "第 " + n + " 轮", events: [], conflicts: 0, live: true, verdict: null };
+      st.byN[n] = { n: n, title: uiT(st.run && st.run.lang).roundN(n), events: [], conflicts: 0, live: true, verdict: null };
       st.rounds.push(st.byN[n]);
       st.rounds.sort((a, b) => a.n - b.n);
     }
@@ -274,7 +351,8 @@ function fitSegs(segs, avail) {
 }
 
 /** 「标签 + 值」。标签列宽固定,整屏的标签才对得齐。 */
-function kv(label, value) { return C.dim(pad(label, 6)) + value; }
+// 标签列宽 8:装得下英文标签(Budget/Roles),中文标签(4 显示宽)也照常留白
+function kv(label, value) { return C.dim(pad(label, 8)) + value; }
 
 /**
  * 一条带标题的细线：`─ 角色 ────────────  裁决 覆盖率 82 ─`。
@@ -406,6 +484,7 @@ function renderLines(st, width, view) {
   // 老代码全都是 L.push(字符串);这里保持那个写法,顺手包成 {text}
   const L = { push: function (t) { LL.push(typeof t === "string" ? { text: t } : t); } };
   const run = st.run || {};
+  const T = uiT(run.lang);   // UI 语言跟回环的 lang(run.start 带来)
   const cur = st.rounds.length ? st.rounds[st.rounds.length - 1] : null;
   const b = run.budget || {};
   const usg = require("./usage.js").reduceEvents(st.usageEvents || []);
@@ -417,8 +496,8 @@ function renderLines(st, width, view) {
   const good = ended && ended.reason === "goal_met";
   const judged = ended && (ended.reason === "judged_met" || ended.reason === "reported_met");
   const statusTxt = ended
-    ? (good || judged ? GL.ok : GL.stop) + " " + (STOP_LABEL[ended.reason] || ended.reason)
-    : GL.run + " 运行中" + (cur ? " · 第 " + cur.n + (b.rounds ? "/" + b.rounds : "") + " 轮" : "");
+    ? (good || judged ? GL.ok : GL.stop) + " " + (T.stop[ended.reason] || ended.reason)
+    : GL.run + " " + T.running + (cur ? T.roundOf(cur.n, b.rounds) : "");
   const statusCol = ended ? (good ? C.green : judged ? C.teal : C.yellow) : C.teal;
   const name = "CODE-FORGE";
   // session 十有八九就是目标截前 60 字。两行说同一句话是「乱」的主要来源之一 ——
@@ -426,7 +505,7 @@ function renderLines(st, width, view) {
   const goalTxt = String(run.goal || "").trim();
   const sessTxt = String(run.session || "").trim();
   const dupe = goalTxt && sessTxt && goalTxt.indexOf(sessTxt) === 0;
-  const sess = dupe ? "" : clip(sessTxt || (goalTxt ? "" : "（还没开局）"),
+  const sess = dupe ? "" : clip(sessTxt || (goalTxt ? "" : T.notStarted),
     Math.max(10, W - dispWidth(name) - dispWidth(statusTxt) - 6));
   // 宽度按**素文本**算,算完再上色 —— 转义符也在字符串里,先上色再对齐,整行就歪了(踩过)
   const gap = Math.max(2, W - dispWidth(name) - 2 - dispWidth(sess) - dispWidth(statusTxt));
@@ -438,7 +517,7 @@ function renderLines(st, width, view) {
   const goal = goalTxt;
   if (goal) {
     wrapText(goal, W - 6, "      ").forEach(function (l, i) {
-      L.push(i === 0 ? kv("目标", l) : l);
+      L.push(i === 0 ? kv(T.kGoal, l) : l);
     });
   }
 
@@ -457,21 +536,21 @@ function renderLines(st, width, view) {
       // 靠文字推状态很脆:评审那条摘要是「评审判定达标」,/^达标/ 匹配不上。
       const met = g.meta && typeof g.meta.met === "boolean"
         ? g.meta.met : /达标/.test(g.summary || "") && !/未达标/.test(g.summary || "");
-      const txt = "R" + r.n + " " + (v == null ? (met ? "过" : "未过") : v);
+      const txt = "R" + r.n + " " + (v == null ? (met ? T.pass : T.fail) : v);
       return met ? C.green(C.bold(txt)) + C.green(" " + GL.ok) : C.dim(txt);
     }).join(C.dim(" " + GL.arrow + " "));
     const sp = spark(vals);
-    L.push(kv("判据", (sp ? C.teal(sp) + "  " : "") + trail));
+    L.push(kv(T.kGate, (sp ? C.teal(sp) + "  " : "") + trail));
   }
 
   const budget = [
-    b.rounds === 0 ? "不限轮" : b.rounds ? b.rounds + " 轮" : null,
+    b.rounds === 0 ? T.unlimitedRounds : b.rounds ? T.nRounds(b.rounds) : null,
     b.seconds ? b.seconds + "s" : null,
     // token 预算:0/没配 = 不限(首选)。只计量得到的部分,闸门在 hostrun
-    b.tokens > 0 ? "token " + kfmt(b.tokens) : "token 不限",
-    b.noProgressRounds ? "零进展 " + b.noProgressRounds + " 轮停" : null
+    b.tokens > 0 ? T.tokBudget(kfmt(b.tokens)) : T.tokUnlimited,
+    b.noProgressRounds ? T.noProgressStop(b.noProgressRounds) : null
   ].filter(Boolean).join(C.dim(" · "));
-  if (budget) L.push(kv("预算", C.dim(budget)));
+  if (budget) L.push(kv(T.kBudget, C.dim(budget)));
   // 用量不单开一行也不单开区域(用户点名:「用量显示在角色后面就够了」) ——
   // 数字全在下面的角色行上;要深挖逐轮/工具明细,走 `code-forge usage`
 
@@ -483,7 +562,7 @@ function renderLines(st, width, view) {
   const roles = st.roleOrder.map((id) => st.roles[id]);
   if (roles.length) {
     L.push("");
-    L.push(rule("角色", W));
+    L.push(rule(T.kRoles, W));
     roles.forEach(function (r, i) {
       const col = r.id === "gate" ? C.grey : ROLE_COLORS[i % ROLE_COLORS.length];
       // 量到了真模型就显示真的。`role.add` 里那个是 agent 自己声明的,宿主执行时它多半写
@@ -518,9 +597,9 @@ function renderLines(st, width, view) {
       const said = (r.tokIn || 0) + (r.tokOut || 0);
       const io = measured
         ? (measured.ctx != null
-          ? C.dim("上下文") + padL(kfmt(measured.ctx), 7) + " " + padL(kfmt(measured.out), 6) + "↓"
+          ? C.dim(T.ctxLabel) + padL(kfmt(measured.ctx), 7) + " " + padL(kfmt(measured.out), 6) + "↓"
           // 老事件/别的宿主没报 ctx 时退回含缓存累计 —— 有什么报什么,不硬凑
-          : C.dim("含缓存") + padL(kfmt(measured.in + measured.out + measured.cache), 7) +
+          : C.dim(T.cacheLabel) + padL(kfmt(measured.in + measured.out + measured.cache), 7) +
             " " + padL(kfmt(measured.out), 6) + "↓")
         : said > 0
           ? padL(kfmt(r.tokIn || 0), 7) + "↑ " + padL(kfmt(r.tokOut || 0), 6) + "↓"
@@ -536,7 +615,7 @@ function renderLines(st, width, view) {
       const mw = Math.max(8, Math.min(20, W - 22 - (showIo ? 24 : 0)));
       L.push({
         text: "  " + col(mark) + " " + pad(r.name, 11) +
-          C.dim(pad(model, mw)) + C.dim(padL(r.calls ? r.calls + " 次" : "未发言", 7)) +
+          C.dim(pad(model, mw)) + C.dim(padL(r.calls ? T.calls(r.calls) : T.silent, 7)) +
           (showIo && io ? "   " + C.dim(io) : ""),
         // 快帧要单独刷这一格 —— 标出来让 watch 记它的屏幕行号
         pulseRole: isActive ? r.id : undefined
@@ -551,8 +630,8 @@ function renderLines(st, width, view) {
    * 默认仍然展开最后一轮,所以进来第一眼跟以前一样。 */
   if (st.rounds.length) {
     L.push("");
-    L.push(rule("轮次", W, st.rounds.length + " 轮" +
-      (st.rounds.length > 1 ? "　点一行看那一轮" : "")));
+    L.push(rule(T.kRounds, W, T.roundsCount(st.rounds.length) +
+      (st.rounds.length > 1 ? T.clickHint : "")));
     st.rounds.forEach(function (r) {
       const isOpen = r.n === openN;
       const isSel = r.n === selN;
@@ -560,7 +639,7 @@ function renderLines(st, width, view) {
       const met = g && (g.meta && typeof g.meta.met === "boolean"
         ? g.meta.met : /达标/.test(g.summary || "") && !/未达标/.test(g.summary || ""));
       const val = g
-        ? (g.meta && g.meta.value != null ? String(g.meta.value) : (met ? "过" : "未过"))
+        ? (g.meta && g.meta.value != null ? String(g.meta.value) : (met ? T.pass : T.fail))
         : "";
       const span = r.events.length
         ? (r.events[0].ts || "") + (r.events.length > 1 ? "→" + (r.events[r.events.length - 1].ts || "") : "")
@@ -571,16 +650,16 @@ function renderLines(st, width, view) {
           C.dim(isOpen ? "▾" : "▸") + " " +
           (isOpen ? C.bold("R" + r.n) : "R" + r.n) + "  " +
           C.dim(pad(clip(span, 19), 20)) +
-          C.dim(pad(r.events.length + " 事件", 9)) +
+          C.dim(pad(T.events(r.events.length), 9)) +
           (val ? (met ? C.green(pad(val + " " + GL.ok, 8)) : C.dim(pad(val, 8))) : " ".repeat(8)) +
-          (r.live ? C.teal("进行中") : C.dim(clip(r.verdict && r.verdict.score ? r.verdict.score : "", W - 50)))
+          (r.live ? C.teal(T.inProgress) : C.dim(clip(r.verdict && r.verdict.score ? r.verdict.score : "", W - 50)))
       });
       if (!isOpen) return;
 
       // 展开:这一轮**全部**事件,顺序不倒序（对抗是有先后的）
       const show = r.events.slice(-(view && view.max ? view.max : 12));
       if (r.events.length > show.length) {
-        L.push({ inRound: r.n, text: C.dim("     … 前 " + (r.events.length - show.length) + " 条略") });
+        L.push({ inRound: r.n, text: C.dim(T.elided(r.events.length - show.length)) });
       }
       show.forEach(function (e, si) {
         const ro = st.roles[e.role] || { name: e.role };
@@ -605,7 +684,7 @@ function renderLines(st, width, view) {
           wrapText(String(e.body), W - 14, "").slice(0, 8).forEach(function (l) { det.push(l); });
         }
         if (e.tool && e.tool.name) {
-          det.push("→ " + e.tool.name + (e.tool.status === "error" ? "（失败)" : "") +
+          det.push("→ " + e.tool.name + (e.tool.status === "error" ? T.toolFail : "") +
             (e.tool.args ? "  " + clip(JSON.stringify(e.tool.args), W - 24 - dispWidth(e.tool.name)) : ""));
           if (e.tool.result) {
             String(e.tool.result).split("\n").slice(-2).forEach(function (l) {
@@ -624,7 +703,7 @@ function renderLines(st, width, view) {
         if (e.output) {
           String(e.output).split("\n").slice(-4).forEach(function (l) { det.push(clip(l, W - 14)); });
         }
-        if (!det.length) det.push("（这条只带了 summary —— body/tool/diff 都没报）");
+        if (!det.length) det.push(T.summaryOnly);
         det.forEach(function (l) {
           // 细节行**惰性**:只有条目行(角色名那行)能开合 —— Claude Code 同款(用户点名)。
           // 内容行点了不该有任何反应,不然想选中复制一段命令都会把块合上
@@ -634,12 +713,12 @@ function renderLines(st, width, view) {
       // 那一轮各人烧了多少 —— 「谁在烧钱」和「它在干什么」本来就是同一张表
       const ru = (usg.rounds || []).filter(function (x) { return x.n === r.n; })[0];
       if (ru && ru.agents.length) {
-        L.push({ inRound: r.n, text: C.dim("     用量 " + ru.agents.map(function (a) {
+        L.push({ inRound: r.n, text: C.dim(T.usageInline + ru.agents.map(function (a) {
           return a.role + " " + kfmt(a.in) + "↑" + kfmt(a.out) + "↓";
         }).join(" · ")) });
       }
       if (r.conflicts) {
-        L.push({ inRound: r.n, text: C.yellow("     这一轮有 " + r.conflicts + " 处分歧") });
+        L.push({ inRound: r.n, text: C.yellow(T.conflicts(r.conflicts)) });
       }
       // ★ 进行中的轮在聊天记录末尾挂一条**实时活动行**(带脉搏) ——
       //   展开的轮里要能看到「此刻哪个角色在干什么」,不用低头去找底栏
@@ -677,17 +756,16 @@ function renderLines(st, width, view) {
     L.push("");
     L.push(col(GL.head.repeat(W)));
     L.push(col(C.bold((good || judged ? GL.ok : GL.stop) + " " +
-      (STOP_LABEL[ended.reason] || ended.reason))) +
+      (T.stop[ended.reason] || ended.reason))) +
       (ended.detail ? "  " + C.dim(clip(ended.detail, W - 30)) : ""));
     if (ended.rounds) {
-      L.push(C.dim("  跑了 " + ended.rounds + " 轮" +
-        (ended.seconds ? "，" + ended.seconds + " 秒" : "")));
+      L.push(C.dim(T.ranFor(ended.rounds, ended.seconds)));
     }
   } else if (st.streaming) {
     L.push("");
-    L.push(C.teal(GL.run + " ") + C.dim(clip(st.streaming.text || "进行中…", W - 6)));
+    L.push(C.teal(GL.run + " ") + C.dim(clip(st.streaming.text || T.inProgressDots, W - 6)));
   }
-  if (st.unknown) L.push(C.yellow("  ⚠ " + st.unknown + " 条认不出的事件（已忽略但计数）"));
+  if (st.unknown) L.push(C.yellow(T.unknownEvents(st.unknown)));
   return LL;
 }
 
@@ -698,13 +776,13 @@ function renderLines(st, width, view) {
  * 一旦滚动过,这个等式就不成立了,点第 3 行会点中第 8 轮。
  * 从**中间**挖:顶上是目标/判据(每次都要看),底下是刚发生的事(正在看的)。
  */
-function fitHeight(lines, room) {
+function fitHeight(lines, room, lang) {
   if (room < 3 || lines.length <= room) return lines;
   const keepHead = Math.max(3, Math.floor(room * 0.45));
   const keepTail = room - keepHead - 1;
   const cut = lines.length - keepHead - keepTail;
   return lines.slice(0, keepHead)
-    .concat([{ text: C.dim("  … 中间 " + cut + " 行放不下（终端高一点，或按 o 看网页）") }])
+    .concat([{ text: C.dim(uiT(lang).cutLines(cut)) }])
     .concat(lines.slice(lines.length - keepTail));
 }
 
@@ -924,9 +1002,9 @@ function watch(base, opts) {
   // 正在干活的角色:最近一条带角色的活动/发言(gate 除外)。3 分钟没动静就摘掉标记
   let activeRole = null, activeAt = 0, pulseCells = [];
   let scroll = 0, stickBottom = true, maxScroll = 0;   // 滚动视口(内容撑开,不裁中间)
-  const agoTxt = function () {
+  const agoTxt = function (TW) {
     const s = Math.round((Date.now() - lastEventAt) / 1000);
-    return s < 3 ? "刚刚" : s < 90 ? s + "s 前" : Math.round(s / 60) + "m 前";
+    return s < 3 ? TW.justNow : s < 90 ? TW.secAgo(s) : TW.minAgo(Math.round(s / 60));
   };
 
   const roundNums = function () { return st.rounds.map(function (r) { return r.n; }); };
@@ -958,20 +1036,20 @@ function watch(base, opts) {
     hit = lines.map(function (l) { return l.round == null ? null : l.round; });
     hitEv = lines.map(function (l) { return l.evKey || null; });
 
-    const keys = [["↑↓", "选轮次"], ["⏎", "展开/收起"], ["esc", "收起全部"],
-      ["f", "跟最新"], ["s", "停止"], ["o", "网页"], ["q", "退出"]]
+    const TW = uiT(st.run && st.run.lang);
+    const keys = TW.keys
       .map(function (k) { return C.dim("[") + C.bold(k[0]) + C.dim("] " + k[1]); })
       .join("  ");
     const scrollTag = maxScroll > 0
       ? C.dim("  ⇅ " + (scroll + 1) + "-" + (scroll + lines.length) + "/" + all.length +
-          (stickBottom ? "（跟底）" : "（滚轮/PgUp 翻,f 跟回）"))
+          (stickBottom ? TW.stickBottom : TW.scrollHint))
       : "";
     // 静默久了脉搏转黄 —— 「多半在干活」和「该去看看了」要分得开
     const quietSec = Math.round((Date.now() - lastEventAt) / 1000);
     const pulse = st.ended
-      ? C.dim("■ 档案")
+      ? C.dim(TW.archive)
       : (quietSec > 300 ? C.yellow : C.teal)(C.bold(SPIN[spinI % SPIN.length])) +
-        C.dim(" 最后事件 " + agoTxt());
+        C.dim(TW.lastEvent + agoTxt(TW));
     // 快帧只重写 spinner 那一格,要知道它画在屏幕第几行(内容行数 + 空行 + 分隔线 + 1)
     pulseRow = lines.length + 3;
     /* ★ 分两次写:内容 → 探针 → footer。
@@ -988,9 +1066,9 @@ function watch(base, opts) {
     if (!calibrated) process.stdout.write(String.fromCharCode(27) + "[6n");   // 只问一次,答案在 data 里接
     process.stdout.write("\n" + EL + "\n" +
       C.dim(GL.rule.repeat(w)) + EL + "\n  " + pulse + "   " + keys + scrollTag +
-      C.dim(view.follow ? "" : "   （已停在 R" + view.open + "，按 f 跟回最新）") +
+      C.dim(view.follow ? "" : TW.parked(view.open)) +
       // 回环已结束时说明这是档案 —— 不然刚打开的人会以为「code-forge 跑了个回环」
-      (st.ended ? C.dim("   这是已结束的档案 —— 新开跑: /code-forge（聊天里）") : "") +
+      (st.ended ? C.dim(TW.endedArchive) : "") +
       EL + "\n" + "\x1b[J");
     lastPaint = Date.now();
     dirty = false;
@@ -1076,7 +1154,7 @@ function watch(base, opts) {
       mouseOff();
       if (process.stdin.setRawMode) process.stdin.setRawMode(false);
       clearInterval(timer);
-      console.log("\n" + C.dim("已退出。回环仍在后台跑,`code-forge watch` 可以再接回来。"));
+      console.log("\n" + C.dim(uiT(st.run && st.run.lang).quit));
       process.exit(0);
     };
     const move = function (d) {

@@ -1,239 +1,264 @@
 ---
 name: code-forge
 description: >
-  在一个可验证的目标上跑对抗回环:一个角色提方案、一个角色专门推翻它、由代码跑判据裁定,
-  不达标就带着失败信息再来一轮,直到代码判过或预算到顶。全过程直播到本地监控台网页
-  (轮次、各角色说了什么、判据走势、停止原因)。你自己就是执行者 —— 不需要任何 API key。
-  当用户说「对抗」「adversarial」「互相推翻」「让它们吵一架」「反复迭代直到测试通过」
-  「跑到覆盖率达标」「盯着它改到绿」,或要求一个能看得见过程的迭代回环时使用。
-  不适用于:一次就能改完的小改动、没有可运行判据(测试/命令)的纯讨论。
+  Run an adversarial loop on a verifiable goal: one role proposes and lands changes, one role
+  specializes in overturning them, and code (not a model) rules whether the goal is met; failing
+  rounds carry the failure output forward until the gate passes or the budget runs out. The whole
+  process streams live to a local console (rounds, every role's words, gate trend, stop reason).
+  You are the executor yourself - no API key needed. Use when the user says "adversarial",
+  "对抗", "互相推翻", "让它们吵一架", "iterate until tests pass", "反复迭代直到测试通过",
+  "run until coverage passes", "跑到覆盖率达标", "盯着它改到绿", or asks for an iterative loop
+  whose progress they can watch. Not for: small one-shot edits, or pure discussion with no
+  runnable gate (test/command).
 ---
 
-# 对抗回环
+# Adversarial loop
 
-一个人写、一个人拆、代码判。你扮演所有角色,判定权交给代码。
+One writes, one tears down, code rules. You play every role; the verdict belongs to code.
 
-## 为什么判定必须交出去
+**Language rule: all prompts and role briefs are English (this file included). Everything the USER
+sees - role names, AskUserQuestion cards, your chat replies - is in the user's conversation
+language. Pass that language as `lang` in `loop_begin` (e.g. "zh", "en") so the observers (TUI /
+web console) label everything in it too.**
 
-你有充分动机说「已达标」—— 任何 agent 都有。所以本技能把「过没过」拿走给了 `loop_gate`:
-它跑你指定的那条命令,看退出码和(可选)一个指标数。**你不得自行宣布达成**,
-`loop_end(goal_met)` 在 gate 没真判过之前会被直接拒绝。
+## Why the verdict must be handed over
 
-预算同理:还能不能再来一轮,由 `loop_gate` 的 `continue` 字段说,不由你估。
+You have every incentive to say "goal met" - any agent does. So this skill takes "did it pass"
+away from you and gives it to `loop_gate`: it runs the command you configured and reads the exit
+code and (optionally) one metric. **You must not declare success yourself**; `loop_end(goal_met)`
+is rejected until the gate has actually ruled it met.
 
-## 目标还没说就什么都别开
+Budgets work the same way: whether another round is allowed is said by `loop_gate`'s `continue`
+field, not estimated by you.
 
-用户只打了 `/code-forge`(或目标含糊到「优化一下」这种)时,这一个回合**只做一件事:等目标**。
-体感要像备注输入:停下来等他打字,而不是拒掉让他重打、更不是替他猜。
-判据候选是按目标挑的、角色提示词里带着目标 —— 没有目标就去扫仓库、猜一个目标开跑,
-等于替用户决定他要什么,烧的还是他的额度。三步:
+## Until the goal is stated, start nothing
 
-1. **这段对话里刚讨论过一个具体问题** → 别让人重打一遍:调 AskUserQuestion(header「目标」),
-   把它凝成 1~2 条候选目标当选项(推荐排第一;组件自带 Other 让他自己打)。
-2. **对话里没有现成目标** → 只输出一行「目标：要做什么?一句话说清」,然后停,
-   等他下一条消息。**不要**拿仓库文件编几个目标当选项 —— 判据候选可以按仓库给,
-   目标不行,那是用户的事。也不要解释工作原理、列菜单 —— 等输入的屏上多一个字都是干扰。
-3. **答回来仍太短/含糊** → 说清为什么要具体(「判据是按目标挑的」),再问一次。
-   规矩:目标立不住,`loop_begin` 就不该被调。
+When the user typed just `/code-forge` (or the goal is as vague as "optimize it"), this turn does
+exactly one thing: **wait for the goal**. It should feel like an input prompt: stop and let them
+type - do not reject and make them retype, and do not guess for them. Gate candidates are chosen
+from the goal and role briefs carry the goal - scanning the repo to invent a goal means deciding
+for the user and burning their quota. Three steps:
 
-## 开跑前先把这两样问清楚
+1. **The conversation just discussed a concrete problem** → don't make them retype it: call
+   AskUserQuestion (header: goal) with 1-2 candidate goals distilled from it (recommended first;
+   the component has a built-in Other).
+2. **No usable context** → output a single line asking what to do (in the user's language,
+   e.g. Chinese: 「目标：要做什么？一句话说清」), then stop and wait. Do NOT invent goal options
+   from repo files - gate candidates may come from the repo, goals may not; that is the user's call.
+   No explanations, no menus - every extra character on a waiting screen is noise.
+3. **The answer is still too short/vague** → explain why specificity matters ("gate candidates are
+   chosen from the goal") and ask once more. Rule: no established goal, no `loop_begin`.
 
-1. **判据命令** —— 一条现在就能跑、能反映目标的命令。
+## Two things to settle before starting
 
-   **不要空着问「判据命令是什么」**:用户往下要打一长串,而仓库在你手里。
-   **带着上面已经立住的目标**花几十秒看一眼仓库(README / package.json / pyproject.toml /
-   Makefile / CI 配置 / 测试目录),再**给 2~4 条候选让用户挑**,每条说清为什么。
-   顺序是死的:目标 → 带着目标看仓库 → 候选。反过来(先扫仓库、按看到的文件想目标)
-   挑出来的是「这个仓库能跑什么」,不是「这个目标该用什么判」—— 两者常常不是同一条命令。
+1. **The gate command** - one command runnable right now that reflects the goal.
 
-   **宿主有选项点选组件就必须用它,不许打一段文字列表让人打字回话。**
-   Claude Code 里就是 AskUserQuestion:候选当 options(label 放命令本身,description 放
-   「为什么是它」),**推荐的那条排第一并标(Recommended)**;「自己填」不用你摆 ——
-   组件自带 Other 自填项。用户方向键/点选一下就完事,不必切输入法打「判据」两个字。
-   像这样:
+   **Never ask "what's the gate command" cold**: the user would have to type a long string while
+   the repo is in your hands. **With the established goal in mind**, spend a minute on the repo
+   (README / package.json / pyproject.toml / Makefile / CI config / test dirs), then **offer 2-4
+   candidates to pick from**, each with a reason.
+   The order is fixed: goal → look at the repo with the goal → candidates.
+   The reverse (scan first, imagine a goal from files) picks "what this repo
+   can run", not "what this goal should be judged by" - often not the same command.
 
-   ```
-   AskUserQuestion({ questions: [{
-     question: "用哪条命令当判据？", header: "判据",
-     options: [
-       { label: "pytest -q tests/webhook (Recommended)",
-         description: "tests/webhook 下有 12 个用例，直接覆盖回调路径" },
-       { label: "pytest -q", description: "全量，慢但保险" },
-       { label: "npm run typecheck", description: "package.json 里有这个脚本" }
-     ], multiSelect: false }] })
-   ```
+   **If the host has a clickable option component, use it - never a numbered text list.** In
+   Claude Code that is AskUserQuestion: candidates as options (label = the command itself,
+   description = why), **recommended first, tagged (Recommended)**; don't add a "type my own"
+   option - the component has Other built in. Write the card in the user's language.
+   Only hosts without such a component (plain-text chats like Codex) fall back to a
+   numbered list ending with "0) I'll type my own" - that is a downgrade, and labeled as one.
 
-   宿主没有这种组件(Codex 等纯文本聊天)才退回编号列表让人打号:
+   Three hard rules:
+   - **Only offer commands that actually exist** - script names, test dirs, the CI command: things
+     you actually saw. **Never invent** script names or flags: the first `loop_gate` really runs
+     it, an invented one reports `gate_broken`, burning a round and looking like a code bug.
+   - **Goal-relevant candidates first**: for a payment-callback fix, that module's tests beat a
+     full run.
+   - **If the repo truly has no runnable check, say so honestly.** Then ask: write a rough check
+     first, or accept "this run cannot rule success - only round/time limits stop it" (both the
+     page and terminal will honestly show "not judged").
 
-   ```
-   判据命令候选（按可信度排）：
-     1) pytest -q tests/webhook   tests/webhook 下有 12 个用例，直接覆盖回调路径
-     2) pytest -q                 全量，慢但保险
-     0) 我自己填
-   ```
+   If the goal carries a number, propose `metric` too: a regex capturing one number from the
+   command's output, compared to a range, e.g. `{ name:"coverage", pattern:"coverage: ([0-9]+)",
+   min:80 }`. **Only when you have confirmed the command really prints that number** - an
+   uncaptured metric never counts as met.
 
-   三条硬规矩:
-   - **只提议仓库里已经存在的命令** —— 脚本名、测试目录、CI 里在用的那条,都得是你真看见的。
-     **不许发明**不存在的脚本名或参数:第一轮 `loop_gate` 会真跑它,编的那条会报 `gate_broken`,
-     白烧一轮还让人以为是代码有问题。
-   - **与目标相关的排前面**:改支付回调就先跑那部分的测试,而不是甩一条全量上去。
-   - **仓库里确实没有可运行的检查,就如实说**,别硬凑。这时问用户:先写一条最糙的检查,
-     还是接受「这次判不出达标、只能靠轮数/时限停」(页面与终端都会标「未判定」)。
+   **A gate is a stop CONDITION, not necessarily a runnable command.** Three kinds, by trust:
 
-   目标里带量的话顺手把 `metric` 一起提:正则从那条命令的输出里抓第一个捕获组比区间,
-   例如 `{ name:"覆盖率", pattern:"coverage: ([0-9]+)", min:80 }`。
-   **只在你确认那条命令真会打印这个数时才提** —— 抓不到数一律不算达标。
-
-   **判据的定义是「停止需要达到的条件」,不一定是一条可执行的命令。** 三种,按可信度排:
-
-   | 种类 | 怎么配 | 停止原因 | 适合 |
+   | Kind | How | Stop reason | Fits |
    |---|---|---|---|
-   | 命令 | `goal.command`(+可选 metric.pattern 抓数) | `goal_met`(最强,可复现) | 有测试/检查命令的目标 |
-   | **角色上报指标** | `goal.metric: {name, source:"say", max/min}`,反驳者每轮 `loop_say` 带 `value` | `reported_met` | 「挖 bug 清零」这类**没有命令能数**的量 |
-   | 评审 rubric | `goal.rubric` | `judged_met` | 完全不可量化(「更好读」) |
+   | Command | `goal.command` (+ optional metric.pattern) | `goal_met` (strongest, reproducible) | goals with tests/checks |
+   | **Role-reported metric** | `goal.metric: {name, source:"say", max/min}`; the critic reports `value` via `loop_say` each round | `reported_met` | counts no command can measure ("bugs found this round") |
+   | Judge rubric | `goal.rubric` | `judged_met` | truly unquantifiable ("more readable") |
 
-   目标是「修到连续 N 轮干净」这类的,再加 `goal.streak: N`:判据要**连续 N 轮判过**才算达标,
-   断一次从头攒;期间判过的轮不算零进展(那是判据定义里的确认期,反驳者接着挖才是正事)。
-   例:「修掉查出的 bug,直到连续 3 轮 bug 数为 0」——
-   `goal: { metric: {name:"新bug数", source:"say", max:0}, streak: 3 }` + `budget.rounds: 0`;
-   每轮反驳者挖完 `loop_say({role:"反驳者", value: 挖到的数, ...})`。
-   **实现者报的 value 会被忽略** —— 它有动机报 0,数得由找茬的那方来报。
-2. **预算** —— 几轮、多少秒。默认 8 轮 / 3600 秒 / 连续 2 轮无进展即停。
-   用户没说就用默认,并在开跑时说一句你用了什么。
-   用户说「不限轮数」「跑到干净为止」就给 `rounds: 0` —— 时限和零进展闸门仍然生效,
-   要一并确认时限(默认 3600s 对不限轮往往太短,主动问一句)。
+   For "fix until N consecutive clean rounds" goals, add `goal.streak: N`: the gate must pass
+   **N rounds in a row**; a miss resets the streak, and passing rounds during it don't count as
+   no-progress (that's the confirmation window - the critic keeps digging).
+   Example: "fix found bugs until 3 consecutive rounds with 0 bugs" →
+   `goal: { metric: {name:"new bugs", source:"say", max:0}, streak: 3 }` + `budget.rounds: 0`;
+   each round the critic reports `loop_say({role:"<critic>", value: N, ...})`.
+   **Proposer-reported values are ignored** - it has every incentive to report 0; the count must
+   come from the side doing the digging.
 
-用户已经把这些说清楚了就别再问,直接开。
+2. **Budget** - rounds and seconds. Defaults: 8 rounds / 3600s / stop after 2 no-progress rounds.
+   If unspecified, use defaults and say so when starting. "Unlimited rounds" / "run until clean"
+   → `rounds: 0` - time and no-progress gates still apply; confirm the time limit too (3600s is
+   usually too short for unlimited rounds - ask).
 
-**配置的顺序是铁律:先把每一项的窗口给完,最后才问开跑。**
-不许用「开跑?不满意再选改」代替 —— 那是把改的成本藏在确认后面(用户当面指出过:
-「要在这些确认完再问是否开跑」)。每一题推荐排第一,一路回车就是全默认。
+If the user already stated all of this, don't re-ask - start.
 
-**配置卡**(一次 AskUserQuestion 最多带 4 题,能并的并进同一卡):
+**Config order is iron: every option gets its window first, and "start?" comes last.**
+Never substitute "start? you can change it after" - that hides the cost of changing behind the
+confirmation (a user called this out explicitly). Recommended option first in every question, so
+plain Enter = all defaults.
 
-```
-题1「判据」   候选命令(推荐第一;组件自带 Other 自填)
-题2「模型」   选项: 推荐分配 (Recommended,label 里写明 实现者 X · 反驳者 Y · 复核者 Z)
-              / 全用最强 / 全用最省 / 逐角色挑(选它就再出一卡,一角色一题)
-题3「轮数」   8 (Recommended) / 不限(rounds:0) / 3(快速) —— Other 自填具体数
-题4「时限」   3600s (Recommended) / 7200s —— 选了不限轮数时把更长的档位排前面
-```
-
-目标带「连续 N 轮」这类字样时,streak 也要有一题(推荐 = 从目标里读出的 N,
-给快一档/严一档两个备选)。零进展几轮停之类的冷门项不单独占题,确认卡留兜底。
-
-**确认卡**(配置卡全部答完之后才出):把最终配置摊成小结,问一次:
+**Config card** (one AskUserQuestion carries at most 4 questions; merge where possible; in the
+user's language):
 
 ```
-question: "就这么开跑？", header: "确认",
+Q1 gate      candidate commands (recommended first; Other is built in)
+Q2 models    recommended assignment (Recommended, spelling out proposer X · critic Y · reviewer Z)
+             / all-strongest / all-cheapest / pick per role (then one more card, one role each)
+Q3 rounds    8 (Recommended) / unlimited (rounds:0) / 3 (quick) - Other for custom
+Q4 time      3600s (Recommended) / 7200s - put longer first when rounds are unlimited
+```
+
+If the goal mentions "N consecutive rounds", streak gets a question too (recommended = the N from
+the goal, with one quicker/stricter alternative). Niche knobs (no-progress rounds etc.) don't get
+questions; the confirm card is the catch-all.
+
+**Confirm card** (only after every config question): lay out the final summary, ask once, in the
+user's language, e.g.:
+
+```
+question: "Start as configured?", header: "confirm",
 options: [
-  { label: "开跑 (Recommended)", description: "按上面的小结开始" },
-  { label: "再改一项", description: "回到配置卡改(说明想改哪项)" },
-  { label: "取消", description: "这次不跑" }
+  { label: "Start (Recommended)", description: "begin with the summary above" },
+  { label: "Change one thing", description: "back to the config card (say which)" },
+  { label: "Cancel", description: "not this time" }
 ]
 ```
 
-**开局流程由 `loop_begin` 的状态机编排,你只当手,不许自己编排顺序**(实测:流程写在
-提示词里会被跳过、布尔硬闸会被自我盖章 —— 所以顺序收进了代码):
-1. 第一次调 `loop_begin`(带 task,用户已给目标时;或什么都不带)—— 它回**当前这一步**的指令和一次性 token;
-2. 照指令做(问目标 / 出配置卡 / 摆它拼好的小结出确认卡),带 token 重调;
-3. 乱序、跳步、错 token 都会被弹回当前步。用户在确认卡选「开跑」→ `{token, go:true}` 才真开局。
-连确认卡上的小结都是它拼好回给你的 —— **原样摆,不要改写**。
+**The start flow is orchestrated by `loop_begin`'s state machine - you are only the hands, never
+the scheduler** (tested: flows written in prompts get skipped; boolean gates get self-stamped -
+so the order lives in code):
+1. First `loop_begin` call (with task if the user gave the goal, or empty; **pass `lang`**) - it
+   returns the CURRENT step's instruction and a one-time token;
+2. Follow the instruction (ask the goal / show the config card / show its prepared summary on the
+   confirm card), call again with the token;
+3. Out-of-order, skipped steps, or wrong tokens bounce back to the current step. Only when the
+   user picks Start does `{token, go:true}` actually begin.
+The confirm-card summary comes back prepared by the server - **show it verbatim, no rewriting**.
 
-## 角色:派给不同的模型,别自己一个人演
+## Roles: dispatch to different models, don't act alone
 
-至少两个角色,否则不叫对抗。**同一个模型自己跟自己唱反调,反驳强度会明显偏软** ——
-所以能派子 agent 就派,并且让它们跑在**不同模型**上。零 key:用的是宿主自己的模型访问权。
+At least two roles, or it isn't adversarial. **A model debating itself is measurably softer** -
+dispatch subagents when you can, on **different models**. Zero keys: it's the host's own model
+access.
 
-本技能自带三个角色定义(装在 `~/.claude/agents/` 或插件的 `agents/`):
+The skill ships three role definitions (installed in `~/.claude/agents/` or the plugin's
+`agents/`). **Register their display names in the user's language** (e.g. zh: 实现者 / 反驳者 /
+复核者; en: proposer / critic / reviewer):
 
-| 角色 | 子 agent | 模型 | 工具 | kind |
+| Role | Subagent | Model | Tools | kind |
 |---|---|---|---|---|
-| 实现者 | `forge-proposer` | `sonnet` | 读写 + Bash | `propose` |
-| 反驳者 | `forge-critic` | `opus` | **只有 Read/Grep/Glob** | `attack` |
-| 复核者 | `forge-reviewer` | `sonnet` | 只读 | `audit` |
+| proposer | `forge-proposer` | `sonnet` | read/write + Bash | `propose` |
+| critic | `forge-critic` | `opus` | **Read/Grep/Glob only** | `attack` |
+| reviewer | `forge-reviewer` | `sonnet` | read-only | `audit` |
 
-**反驳者没有写权限,这是工具层面的硬约束,不是提示词里的请求。** 一个能顺手把问题抹平的反驳者
-等于没有反驳者;它的产物必须是「哪一行、什么触发路径」,由实现者去改。
+**The critic has no write access - a tool-level hard constraint, not a polite request.** A critic
+that can quietly patch over problems is no critic; its product is "which line, which trigger
+path", and the proposer does the changing.
 
-**模型可以当场换**:表里那三个只是默认值(写在子 agent 定义的 frontmatter 里)。
-用户在聊天里点名 ——「反驳者用 opus」「实现者换 haiku 省点」—— 就在派发那次 Task/Agent
-调用里用 `model` 参数覆盖,并在开跑小结里写清最终用了什么。
-用户说「我想挑挑模型」而没点名时,同样走选项点选(AskUserQuestion 一题一个角色,
-推荐排第一带理由 —— 反驳者最强、实现者紧跟、复核者最省),别让他打模型名。两条边界:
-- 点的模型这个宿主没有(报错/起不来)就**如实说并保持默认**,不许静默换成别的;
-- 反驳者往弱了换要提醒一句「软反驳者等于没有反驳者」,用户坚持就照办。
+**Models are swappable on the spot**: the table above is only the defaults (frontmatter of the
+agent definitions). If the user names models in chat ("critic on opus", "proposer on haiku to
+save"), override with the `model` param on that Task/Agent dispatch and state the final lineup in
+the start summary. If they say "let me pick" without naming, use clickable options again
+(AskUserQuestion, one question per role, recommended first with reasons - critic strongest,
+proposer close, reviewer cheapest). Two edges:
+- A named model this host doesn't have (errors out) → **say so honestly and keep the default**;
+  never silently substitute.
+- Downgrading the critic gets one warning ("a soft critic is no critic"); if the user insists, obey.
 
-派发方式(Claude Code):用 Task/Agent 工具,`subagent_type` 填上面那三个名字。
-同一轮里实现者与反驳者若互不依赖,**放在同一条消息里并发派**,拿回结果后各自 `loop_say`。
-**有依赖就串行,别并发**:「挖 bug-修 bug」类回合的轮内顺序是死的 ——
-①实现者修上一轮挖出的问题 → ②反驳者重挖复检、`loop_say` 报数 → ③`loop_gate`。
-顺序反了会把还没修的又数一遍,白烧一轮。每派出一个角色先 `loop_say` 一条 route,
-修的步骤一开工就要报 —— 用户看到「挖出 bug 后长时间没动静」会以为卡死(实测问过)。
-需要更强的反驳时,可以同一轮派多个 `forge-critic`,给不同的攻击面(并发 / 边界 / 入口覆盖),
-再把它们的结论合并成一条 `loop_say`。
+Dispatch (Claude Code): the Task/Agent tool with `subagent_type` set to the three names above.
+When the proposer and critic are independent within a round, **dispatch them concurrently in one
+message**, then `loop_say` each result. **With dependencies, go serial**: dig-fix rounds have a
+fixed order - (1) proposer fixes last round's findings → (2) critic re-digs and reports `value`
+→ (3) `loop_gate`. Reversed order counts unfixed bugs again and burns a round. `loop_say` a
+`route` line when dispatching, and report the moment fixing starts - users watching "bugs found,
+then long silence" assume a hang (tested).
+For a stronger adversarial pass, dispatch several `forge-critic`s in one round with different
+attack surfaces (concurrency / boundaries / entry-point coverage), then merge their findings into
+one `loop_say`.
 
-**宿主不支持子 agent 时**(Codex 等):先用 `loop_agent` 把角色派成**独立进程** ——
-监控台代跑,独立会话、可指定模型、反驳者在工具层就是只读,隔离不比子 agent 弱。
-prompt 要自带全部上下文(它看不见你的对话);结果自动 loop_say,不必再报。
-`loop_agent` 起不来时才退化成你自己按角色轮流发言 —— 那也能跑,但要清楚
-反驳强度会降一档;此时更要严格按 `forge-critic` 那份职责去找反例,而不是走过场。
+**Hosts without subagents** (Codex etc.): use `loop_agent` to run a role as a **standalone
+process** - the console hosts it: isolated session, chooseable model, critics read-only at the
+tool layer. The prompt must be self-contained (it cannot see your conversation); results are
+auto-loop_say-ed. Only if `loop_agent` fails, fall back to playing roles yourself in turn - it
+works, but the adversarial strength drops a tier; follow `forge-critic`'s brief all the more
+strictly, hunting real counterexamples, not going through motions.
 
-需要时加更多档位:`test`(补用例)、`patch`(落地改动)、`defend`(被驳后辩护)、`audit`(安全/性能专项)。
+Add more tiers when needed: `test` (add cases), `patch` (land changes), `defend` (rebuttal
+defense), `verdict`, `audit` (security/perf specials).
 
-**跨厂商多模型**(让 gpt / gemini 同场对抗)需要 API key,走的是本地驱动模式 —— 见 README,
-不是本技能的路径。
+**Cross-vendor multi-model** (gpt / gemini in the same arena) needs API keys and the local-driver
+mode - see README; not this skill's path.
 
-## 协议(照这个顺序走)
+## Protocol (in this order)
 
 ```
-loop_begin({session, goal:{command, cwd, metric}, budget, roles})
-  ↓  ← 自动弹一个终端窗口直播(没有终端模拟器才退回浏览器);把网址也告诉用户
-每一轮:
-  实现者做事 → loop_say({role:"实现者", summary, body, diff?})
-  反驳者做事 → loop_say({role:"反驳者", summary, body, targets:["实现者"]})
-  (其它角色同理)
+loop_begin({session, lang, goal:{command, cwd, metric}, budget, roles})
+  ↓  ← auto-pops a terminal live window (browser only as fallback); tell the user the web URL too
+each round:
+  proposer works → loop_say({role:"<proposer>", summary, body, diff?})
+  critic works   → loop_say({role:"<critic>", summary, body, targets:["<proposer>"]})
+  (other roles likewise)
   loop_gate()
-    ├ met:true            → 已自动收工。把结论和判据输出告诉用户。
-    ├ continue:true       → 把 output 里的失败信息带进下一轮,回到上面
-    └ continue:false      → 停手,按 stopReason 如实告诉用户为什么停(别说成「做完了」)
+    ├ met:true            → already wrapped up. Report the verdict and gate output to the user.
+    ├ continue:true       → carry the failure output into the next round, back to the top
+    └ continue:false      → stop; report the true stopReason (never dress it up as "done")
 ```
 
-要点:
+Key points:
 
-- **每个角色发言后立刻 `loop_say`**,别攒到最后一起报 —— 页面是给人实时看的,攒着就没意义了。
-- **派活之前也要报一声**:`loop_say({role:"实现者", kind:"route", summary:"已派出（sonnet），开始读仓库"})`。
-  一个子 agent 在真实目标上跑 5~15 分钟很正常 —— 这期间直播上一条事件都没有的话,
-  用户只能猜「是模型慢还是挂了」(实测被问过)。派出去那一刻就是第一条事件。
-- `summary` 一句话结论(页面折叠行就显示这句),`body` 放完整理由。
-- 改了文件就带上 `diff`(file / add / del / lines),页面右栏会长出代码演进。
-- 用了工具就带上 `tool`(name / args / result / status),页面会显示成工具块。
-- **token 用量不要编**:Claude Code 里子 agent 的账**不用你操心** —— 它自己把每个子 agent
-  存了档(`~/.claude/projects/…/subagents/`,带真模型与逐条 usage),监控台直接读那份。
-  你手上确实拿得到数(结果里带用量)时可以顺手报进 `loop_say({tok:{in,out}})`;拿不到就别带,
-  **绝不许估一个数**。
-- 能并行就并行:实现者和反驳者在同一轮里互不依赖时,可以并发派子任务,再各自 `loop_say`。
-- 不确定还能不能继续就 `loop_status`,别自己估。
+- **`loop_say` immediately after each role speaks** - never batch at the end; the page is live for
+  humans, batching defeats it.
+- **Report before dispatching too**: `loop_say({role, kind:"route", summary:"dispatched (sonnet),
+  reading the repo"})`. A subagent legitimately runs 5-15 minutes on a real goal - with zero
+  events in that window the user can only guess "slow model or hang?" (tested). Dispatch moment =
+  first event.
+- `summary` is the one-sentence conclusion (collapsed rows show it), `body` the full reasoning -
+  **both in the user's language**; they are user-facing archive content.
+- Attach `diff` (file / add / del / lines) when files changed - the page grows a patch trail.
+- Attach `tool` (name / args / result / status) when tools were used - rendered as tool blocks.
+- **Never fabricate token usage**: in Claude Code the subagent accounts are read from its own
+  archives (`~/.claude/projects/…/subagents/`, real models, per-message usage). If your own
+  result carries usage, you may pass `loop_say({tok:{in,out}})`; otherwise omit - **never
+  estimate**.
+- Parallelize when independent; `loop_status` when unsure whether another round is allowed -
+  never estimate.
 
-## 三条纪律
+## Three disciplines
 
-1. **不许宣布达标。** 只有 `loop_gate` 能。它说 `met:false`,那就是没过,即便你觉得改对了。
-2. **不许改判据来达标。** 若判据本身写错了(命令跑不起来、正则抓不到数),
-   `loop_gate` 会回 `gate_broken` 或 `未抓到` —— 这时停下来告诉用户判据要修,
-   **不要**顺手放宽 `min`、注释掉失败的用例、或换一条更容易过的命令。那是把尺子锯短。
-3. **停了就如实说为什么停。** `stopReason` 有 `goal_met` / `budget_rounds` / `budget_time` /
-   `no_progress` / `gate_broken` / `stopped` / `abandoned` 七种,下一步动作完全不同。
-   「烧完预算停」说成「已完成」是本技能最不能出的错。
+1. **Never declare success.** Only `loop_gate` can. If it says `met:false`, it did not pass, even
+   if you are sure the fix is right.
+2. **Never bend the gate to pass it.** If the gate itself is broken (command won't run, regex
+   captures nothing), `loop_gate` reports `gate_broken` - stop and tell the user the gate needs
+   fixing. **Do not** loosen `min`, comment out failing tests, or swap in an easier command. That
+   is sawing off the ruler.
+3. **When it stops, say why truthfully.** `stopReason` is one of `goal_met` / `budget_rounds` /
+   `budget_time` / `no_progress` / `gate_broken` / `stopped` / `abandoned` - each demands a
+   different next move. Reporting "budget exhausted" as "completed" is this skill's cardinal sin.
 
-## 收尾时告诉用户
+## When wrapping up, tell the user
 
-- 停止原因(用上面那七种里真的那一条)、跑了几轮
-- 判据最后一次的输出要点(哪几个用例还红、指标停在多少)
-- 反驳者提过但**没被采纳**的意见 —— 那常常是下一个 bug 的位置
-- 监控台网址:完整档案(每轮、每个角色的原话、判据走势)都在那儿
+- The stop reason (the true one of the seven) and rounds run
+- The gate's final output highlights (which tests still red, where the metric stopped)
+- Critic remarks that were **not** adopted - often where the next bug lives
+- The console URL: the full archive (every round, every role's words, gate trend) lives there
 
-## 什么时候别用它
+## When not to use this
 
-- 一次就能改完:直接改,回环的开销不值。
-- 没有可运行的判据、也不愿意写一条:那只是讨论,不是回环。
-- 用户只想要个答案不想看过程:直接答。
+- One-shot fixable: just fix it; the loop's overhead isn't worth it.
+- No runnable gate and unwilling to write one: that's a discussion, not a loop.
+- The user wants an answer, not a process: just answer.

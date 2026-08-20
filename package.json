@@ -14,6 +14,7 @@
   },
   "//files": "server.js 会 require 这里的每一个 .js —— 漏一个,装出去的包就是坏的(踩过:tui/agentrun/agentcli/gatesuggest 全漏了)。加文件时对照 require 一遍。",
   "files": [
+    "i18n.js",
     "server.js",
     "install.js",
     "hostrun.js",
@@ -25,7 +26,8 @@
     "demo.js",
     "tui.js",
     "hookprompt.js",
-    "usage.js", "chatusage.js",
+    "usage.js",
+    "chatusage.js",
     "adapters.js",
     "perrole.js",
     "agentcli.js",

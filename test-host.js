@@ -62,7 +62,7 @@ async function testStateMachine() {
   // ★ 核心:gate 没判过之前,不许自称达标
   const cheat = host.end("goal_met", "我觉得改好了");
   assert.ok(cheat.error, "必须拒绝");
-  assert.ok(/判据还没有判过达标/.test(cheat.error));
+  assert.ok(/the gate has not ruled the goal met/.test(cheat.error));
   assert.ok(host.status().active, "被拒之后回环必须还在跑,不能被这一下带停");
   ok("★ gate 没判过就说 goal_met → 拒绝,且回环继续（这是整层存在的理由）");
 
@@ -171,7 +171,7 @@ async function testStops() {
   m = mk();
   const nb = m.host.begin({ goal: {}, budget: { rounds: 3 }, roles: ROLES });
   assert.strictEqual(nb.gateConfigured, false);
-  assert.ok(/无法判定达标/.test(nb.note), "没判据要在返回值里就把后果说清");
+  assert.ok(/cannot rule the goal met/.test(nb.note), "没判据要在返回值里就把后果说清");
   v = await m.host.gate();
   assert.strictEqual(v.met, false);
   assert.ok(/未配置|判据/.test(v.detail));
@@ -255,7 +255,7 @@ function testMcpEndToEnd() {
           });
           // 工具描述里必须写着「不许自己宣布达标」—— 提示词侧先禁,代码侧才兜底
           const gateDesc = list.result.tools.filter(function (t) { return t.name === "loop_gate"; })[0].description;
-          assert.ok(/不得自行宣布达成/.test(gateDesc), "loop_gate 描述必须明写不许自己宣布达标");
+          assert.ok(/must not declare success yourself/.test(gateDesc), "loop_gate 描述必须明写不许自己宣布达标");
           ok("tools/list 六个工具齐全,且描述里明写「达标不由你说」");
 
           const suite = path.join(os.tmpdir(), "cf-mcp-suite-" + process.pid + ".js");
@@ -271,23 +271,23 @@ function testMcpEndToEnd() {
               metric: { name: "覆盖率", pattern: "coverage: ([0-9]+)", min: 80 } },
             budget: { rounds: 3, seconds: 600 }, roles: ROLES };
           const w1 = await callTool("loop_begin", Object.assign({ go: true }, CFGE));
-          assert.ok(w1.isError && w1.json && w1.json.步骤 === "1/3 目标",
+          assert.ok(w1.isError && w1.json && w1.json.step === "1/3 goal",
             "★ 上来就想开局 → 弹回第 1 步(问目标),带全套配置也没用");
           const w2 = await callTool("loop_begin", { token: w1.json.token, task: "MCP 全链路测试目标" });
-          assert.ok(w2.isError && w2.json.步骤 === "2/3 配置", "交目标 → 配置卡指令");
-          assert.ok(/推荐排第一/.test(w2.text) && /一路回车/.test(w2.text),
+          assert.ok(w2.isError && w2.json.step === "2/3 config", "交目标 → 配置卡指令");
+          assert.ok(/recommended option first/i.test(w2.text) && /Enter = all defaults/.test(w2.text),
             "配置卡指令要写明:每题推荐排第一、一路回车=全默认");
           const wOld = await callTool("loop_begin", Object.assign({ token: w1.json.token }, CFGE));
-          assert.ok(wOld.isError && /token 不对/.test(wOld.text), "★ 旧 token 被拒 —— 每步都换,不能跳");
+          assert.ok(wOld.isError && /Wrong token/.test(wOld.text), "★ 旧 token 被拒 —— 每步都换,不能跳");
           const w3 = await callTool("loop_begin", { token: w2.json.token, goal: CFGE.goal, budget: CFGE.budget });
-          assert.ok(w3.isError && w3.json.缺 && /roles/.test(JSON.stringify(w3.json.缺)),
+          assert.ok(w3.isError && w3.json.missing && /roles/.test(JSON.stringify(w3.json.missing)),
             "缺字段要点名 —— 说明有题没问");
           const w4 = await callTool("loop_begin", Object.assign({ token: w3.json.token }, CFGE));
-          assert.ok(w4.isError && w4.json.步骤 === "3/3 确认", "配置交齐 → 确认卡");
-          assert.ok(/原样/.test(w4.text) && w4.json.小结 && /覆盖率/.test(w4.json.小结),
-            "★ 确认卡小结由服务端拼,模型原样摆 —— 它没有可编排的东西");
+          assert.ok(w4.isError && w4.json.step === "3/3 confirm", "配置交齐 → 确认卡");
+          assert.ok(/verbatim/.test(w4.text) && w4.json.summary && /覆盖率/.test(w4.json.summary),
+            "★ 确认卡小结由服务端拼,模型原样摆(task 是中文 → lang=zh → 小结按中文出)");
           const w5 = await callTool("loop_begin", { token: w4.json.token, revise: true });
-          assert.ok(w5.isError && w5.json.步骤 === "2/3 配置", "「再改一项」回配置卡");
+          assert.ok(w5.isError && w5.json.step === "2/3 config", "「再改一项」回配置卡");
           const w6 = await callTool("loop_begin", Object.assign({ token: w5.json.token }, CFGE));
           const begun = await callTool("loop_begin", { token: w6.json.token, go: true });
           assert.strictEqual(begun.isError, false);
@@ -297,7 +297,7 @@ function testMcpEndToEnd() {
 
           const cheat = await callTool("loop_end", { reason: "goal_met", detail: "我觉得可以了" });
           assert.strictEqual(cheat.isError, true);
-          assert.ok(/判据还没有判过达标/.test(cheat.text));
+          assert.ok(/the gate has not ruled the goal met/.test(cheat.text));
           ok("★ 经 MCP 自称达标 → 被拒(拒绝一路传到宿主看得见的地方)");
 
           const bad = await callTool("loop_say", { role: "查无此人", summary: "x" });
@@ -362,8 +362,8 @@ async function testPackaging() {
     assert.ok(fm.indexOf(w) >= 0, "description 里缺触发词：" + w);
   });
   // 代码侧的拒绝之前,提示词侧必须先禁 —— 只靠代码兜底等于让模型每次都去撞墙
-  assert.ok(/不得自行宣布达成|不许宣布达标/.test(skill), "SKILL.md 必须明写不许自己宣布达标");
-  assert.ok(/不许改判据/.test(skill), "SKILL.md 必须禁止为了达标而放宽判据");
+  assert.ok(/must not declare success yourself/.test(skill), "SKILL.md 必须明写不许自己宣布达标");
+  assert.ok(/Never bend the gate/.test(skill), "SKILL.md 必须禁止为了达标而放宽判据");
   assert.ok(/loop_begin[\s\S]*loop_say[\s\S]*loop_gate/.test(skill), "SKILL.md 必须写清协议顺序");
   ok("SKILL.md：frontmatter、触发词、三条纪律、协议顺序都在");
 
@@ -403,43 +403,43 @@ async function testPackaging() {
     assert.ok(ag.indexOf(w) >= 0, "通用性表里缺：" + w);
   });
   const sk = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-  assert.ok(/候选/.test(sk) && /不许发明/.test(sk),
+  assert.ok(/candidates/.test(sk) && /Never invent/.test(sk),
     "候选式确认必须写进技能（这才是跨宿主通用的那一半）");
   // ★ 聊天里也要能「选模型 / 定目标」:目标来自用户的话、判据走候选式（上面钉过了）,
   //   模型这块以前是缺的 —— 角色模型写死在子 agent 定义里,技能没说用户点名就换。
   //   Task/Agent 派发本来就支持 model 覆盖,缺的只是把这条写给执行者。
-  assert.ok(/模型可以当场换/.test(sk), "★ 技能要写明:用户点名换模型就用 model 参数覆盖");
-  assert.ok(/如实说并保持默认/.test(sk),
+  assert.ok(/Models are swappable on the spot/.test(sk), "★ 技能要写明:用户点名换模型就用 model 参数覆盖");
+  assert.ok(/say so honestly and keep the default/.test(sk),
     "★ 点了不存在的模型要如实说并保持默认 —— 不许静默换成别的（跟 tui 同一条纪律）");
-  assert.ok(/软反驳者等于没有反驳者/.test(sk), "反驳者往弱了换要提醒（跟 tui 的推荐理由同源）");
+  assert.ok(/a soft critic is no critic/.test(sk), "反驳者往弱了换要提醒（跟 tui 的推荐理由同源）");
   // ★ 开跑前的确认要**可点**,不是一段说明文 —— 只给小结等于「看得见改不了」(用户指出过:
   //   聊天里从没被问过模型和轮数)。选项:开跑(推荐)/改模型/改预算/改判据,改完重新确认。
-  assert.ok(/先把每一项的窗口给完,最后才问开跑/.test(sk),
+  assert.ok(/every option gets its window first/.test(sk),
     "★ 顺序铁律:先配置卡(模型/轮数/时限)后确认卡 —— 不许把改项藏在「开跑?」后面");
-  assert.ok(/配置卡/.test(sk) && /确认卡/.test(sk) && /一路回车就是全默认/.test(sk),
+  assert.ok(/Config card/.test(sk) && /Confirm card/.test(sk) && /Enter = all defaults/.test(sk),
     "配置卡每题推荐排第一,一路回车=全默认;答完才出确认卡");
-  assert.ok(/不限\(rounds:0\)/.test(sk), "轮数那一题要摆出「不限」这个档");
-  assert.ok(/开跑 \(Recommended\)/.test(sk), "确认卡上开跑是推荐项 —— 回车即走");
+  assert.ok(/unlimited \(rounds:0\)/.test(sk), "轮数那一题要摆出「不限」这个档");
+  assert.ok(/Start \(Recommended\)/.test(sk), "确认卡上开跑是推荐项 —— 回车即走");
   // ★ 宿主有原生选项组件就必须用它。Claude Code 的 AskUserQuestion 本来就能列选项点选 ——
   //   打一段文字列表让人打号码回话,是把「能点」的界面用成了「只能打字」（用户当面指出过）。
   assert.ok(/AskUserQuestion/.test(sk), "★ 技能要点名 AskUserQuestion —— 有点选组件就不许让人打字");
   assert.ok(/Recommended/.test(sk), "推荐的那条要标 (Recommended) 且排第一（组件的约定）");
-  assert.ok(/自带 Other/.test(sk), "「自己填」由组件的 Other 项承担,不许再手摆一个 0)");
-  assert.ok(/没有这种组件/.test(sk) && /退回编号列表/.test(sk),
+  assert.ok(/Other built in|built-in Other/.test(sk), "「自己填」由组件的 Other 项承担,不许再手摆一个 0)");
+  assert.ok(/without such a component/.test(sk) && /numbered list/.test(sk),
     "纯文本宿主（Codex 聊天等）才退回编号列表 —— 降级要写明是降级");
   /* ★ 只打 `/code-forge` 不写目标:两个入口都不许脑补一个目标开跑。
    *   判据候选是按目标挑的 —— 没有目标就去扫仓库、猜一个开跑,
    *   等于替用户决定他要什么,烧的还是他的额度。 */
-  assert.ok(/目标还没说就什么都别开/.test(sk), "★ 技能要有「目标缺席」这一节,且排在开跑之前");
-  assert.ok(/凝成 1~2 条候选目标/.test(sk), "对话里刚讨论过的问题要凝成候选目标让用户选,别让人重打一遍");
-  assert.ok(/只做一件事:等目标/.test(sk), "★ 空目标那一回合只许等输入 —— 像备注输入,不是拒掉重打");
-  assert.ok(/目标不行/.test(sk),
+  assert.ok(/start nothing/.test(sk), "★ 技能要有「目标缺席」这一节,且排在开跑之前");
+  assert.ok(/1-2 candidate goals/.test(sk), "对话里刚讨论过的问题要凝成候选目标让用户选,别让人重打一遍");
+  assert.ok(/one thing: \*\*wait for the goal\*\*/.test(sk), "★ 空目标那一回合只许等输入 —— 像备注输入,不是拒掉重打");
+  assert.ok(/goals may not/.test(sk),
     "★ 判据候选可以按仓库给,目标不许按仓库编 —— 那是用户的事");
-  assert.ok(/loop_begin` 就不该被调/.test(sk), "目标立不住就不许 loop_begin（与 tui 的 taskEstablished 同源）");
-  assert.ok(/目标 → 带着目标看仓库 → 候选/.test(sk),
+  assert.ok(/no established goal, no `loop_begin`/.test(sk), "目标立不住就不许 loop_begin（与 tui 的 taskEstablished 同源）");
+  assert.ok(/goal → look at the repo with the goal → candidates/.test(sk),
     "★ 顺序写死:目标先立,再带着它看仓库 —— 先扫仓库挑出来的是「仓库能跑什么」,不是「目标该用什么判」");
   const cfToml = fs.readFileSync(path.join(__dirname, "commands", "code-forge.toml"), "utf8");
-  assert.ok(/不要自己编一个目标开跑/.test(cfToml),
+  assert.ok(/do not invent a goal and start/.test(cfToml),
     "★ codex 命令空参时 {{args}} 展开成空 —— toml 里必须写明不许脑补目标");
   assert.ok(/不要调 loop_begin|loop_begin/.test(cfToml), "toml：目标立住之前不许 loop_begin");
   /* ★ Claude Code 那边的斜杠命令(install.js 生成)同样要带这条。
@@ -451,10 +451,11 @@ async function testPackaging() {
   const instSrc = fs.readFileSync(path.join(__dirname, "install.js"), "utf8");
   const cmdAt = instSrc.indexOf("function commandMarkdown");
   const cmdMd = instSrc.slice(cmdAt, instSrc.indexOf(String.fromCharCode(10) + "}", cmdAt));
-  assert.ok(/只做一件事：等目标/.test(cmdMd), "★ Claude Code 斜杠命令也要有空目标处理（等输入）");
-  assert.ok(/禁止：扫仓库/.test(cmdMd),
+  assert.ok(/exactly one thing: \*\*wait for the goal\*\*/.test(cmdMd), "★ Claude Code 斜杠命令也要有空目标处理（等输入）");
+  assert.ok(/Forbidden: scanning the repo/.test(cmdMd),
     "★ 必须明写禁扫仓库 —— 实测模型照着「先确认判据命令」就直接开扫了");
-  assert.ok(/目标立住之后/.test(cmdMd) && cmdMd.indexOf("等目标") < cmdMd.indexOf("判据命令候选"),
+  assert.ok(/Once the goal is established/.test(cmdMd) &&
+    cmdMd.indexOf("wait for the goal") < cmdMd.indexOf("gate-command candidates"),
     "★ 空目标处理要排在「找判据」之前 —— 顺序就是模型的执行顺序");
   ok("通用性对照表在 AGENTS.md，候选式确认在技能里（跨宿主）；聊天里可换模型、开跑前有小结");
 
@@ -600,7 +601,7 @@ async function testPackaging() {
     assert.strictEqual(v1.roundMet, true, "本轮结果单独放 roundMet");
     assert.deepStrictEqual(v1.streak, { need: 3, have: 1 }, "连胜进度要回给 agent");
     assert.strictEqual(v1.continue, true, "还要继续");
-    assert.ok(/连续 3 轮/.test(v1.instruction) && /1\/3/.test(v1.instruction),
+    assert.ok(/3 consecutive/.test(v1.instruction) && /1\/3/.test(v1.instruction),
       "指令要说清:本轮过了、还差几轮、反驳者接着挖");
     assert.strictEqual(v1.remaining.rounds, null, "★ rounds:0 = 不限轮,remaining 回 null(不是 Infinity)");
     // 攒到 1/3 时自称达标必须被拒,而且拒绝语要带进度 —— 「还没判过」对着 2/3 的 agent 是错的
@@ -659,7 +660,7 @@ async function testPackaging() {
 
     // schema 与技能要把这两个选项摆出来 —— 功能在而没人知道等于没有
     const mcpS = fs.readFileSync(path.join(__dirname, "mcp.js"), "utf8");
-    assert.ok(/streak/.test(mcpS) && /不限轮数/.test(mcpS), "loop_begin 的 schema 要写明 streak 与 rounds:0");
+    assert.ok(/streak/.test(mcpS) && /unlimited rounds/.test(mcpS), "loop_begin 的 schema 要写明 streak 与 rounds:0");
     const skS = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
     assert.ok(/goal\.streak/.test(skS) && /rounds: 0/.test(skS),
       "技能要教:连续 N 轮干净 → streak;不限轮数 → rounds:0（并提醒确认时限）");
@@ -681,7 +682,7 @@ async function testPackaging() {
     const v1 = await h.gate();
     assert.strictEqual(v1.roundMet, false);
     assert.ok(/新bug数 = 2/.test(v1.detail) && /反驳者/.test(v1.detail),
-      "裁决要写清:值是谁报的、比的什么区间");
+      "裁决要写清:值是谁报的、比的什么区间(task 中文 → lang zh → 中文裁决)");
     // ★ 实现者报 0 不算数 —— 它有动机报 0。没有合法上报 = 判不了,不是达标
     h.say({ role: "实现者", summary: "我修完了,0个!", body: "", value: 0 });
     const v2 = await h.gate();
@@ -696,7 +697,7 @@ async function testPackaging() {
     const end = evs.filter(function (e) { return e.t === "run.end"; })[0];
     assert.strictEqual(end.reason, "reported_met",
       "★ 停止原因单列 reported_met —— 角色报的数可信度低于命令,不许混进 goal_met");
-    assert.ok(/角色上报/.test(require("./hostrun.js").REASONS.reported_met));
+    assert.ok(/role-reported/.test(require("./hostrun.js").REASONS.reported_met));
     // 上报值不许跨轮滚动:每轮都得重新报(evs 里第 2 轮的 gate 事件是「没人报」)
     const gates = evs.filter(function (e) { return e.t === "event" && e.role === "gate"; });
     assert.ok(gates.some(function (e) { return /没人报/.test(e.summary); }),
@@ -712,7 +713,7 @@ async function testPackaging() {
       "loop_begin 的 schema 要摆出 metric.source:say");
     assert.ok(/value: \{ type: "number"/.test(mcpS2), "loop_say 的 schema 要有 value");
     const skS2 = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-    assert.ok(/停止需要达到的条件/.test(skS2) && /source:"say"/.test(skS2),
+    assert.ok(/stop CONDITION/.test(skS2) && /source:"say"/.test(skS2),
       "技能要教:判据是停止条件,不必是命令;三种判据按可信度排");
     ok("★ 角色上报指标判据：反驳者报数、实现者报 0 无效、连续 3 轮 0 → reported_met（单列）");
   }
@@ -761,13 +762,13 @@ async function testPackaging() {
   ok("★ 反驳者/复核者工具层面就没有写权限（不是靠提示词请求）");
 
   // 实现者那份必须明写红线:不许改判据来达标
-  assert.ok(/不许为了让判据变绿去改判据|不许.*改判据/.test(parsed["forge-proposer"].body),
+  assert.ok(/Never modify the gate to make it green/.test(parsed["forge-proposer"].body),
     "实现者定义里必须明写不许改判据");
   ok("实现者定义里明写「不许改判据来达标」这条红线");
 
   // 技能里要把派发方式和模型表写清,否则装了角色也不会被用
   const skillSrc = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-  ["forge-proposer", "forge-critic", "forge-reviewer", "并发"].forEach(function (w) {
+  ["forge-proposer", "forge-critic", "forge-reviewer", "concurrently"].forEach(function (w) {
     assert.ok(skillSrc.indexOf(w) >= 0, "SKILL.md 里缺：" + w);
   });
   ok("SKILL.md 写清了派给哪三个子 agent、以及并发派发");
@@ -795,13 +796,13 @@ async function testPackaging() {
     };
     const inj = run(JSON.stringify({ prompt: "/code-forge" }));
     assert.strictEqual(inj.code, 0, "★ 空目标是注入(exit 0),不是拦截 —— 拦截画不出输入等待");
-    assert.ok(/只做一件事/.test(inj.out) && /等目标/.test(inj.out),
+    assert.ok(/exactly one thing/.test(inj.out) && /wait for the goal/.test(inj.out),
       "注入的指令要把这一回合钉死在「等目标」上");
     assert.ok(/AskUserQuestion/.test(inj.out), "有上下文时要用选项组件（凝出来的候选 + Other 自填）");
     assert.ok(/目标：要做什么/.test(inj.out), "没上下文时只输出一行提问,然后停");
-    assert.ok(/禁止/.test(inj.out) && /扫仓库/.test(inj.out) && /loop_begin/.test(inj.out),
+    assert.ok(/Forbidden/.test(inj.out) && /[Ss]canning the repo/.test(inj.out) && /loop_begin/.test(inj.out),
       "★ 必须明写禁区 —— 实测不禁的话模型会顺势开扫仓库");
-    assert.ok(/只做一件事/.test(run(JSON.stringify({ prompt: "/code-forge   " })).out),
+    assert.ok(/exactly one thing/.test(run(JSON.stringify({ prompt: "/code-forge   " })).out),
       "只有空白也算空目标");
     // ★ 放行面必须宽而且**静默**:这个钩子跑在用户每一条消息上,
     //   带目标的调用注入了任何字都会污染上下文
@@ -1192,8 +1193,8 @@ async function testPackaging() {
       await hT.dispatch({ role: "反驳者", prompt: "再挖" });
       const v2 = await hT.gate();
       assert.strictEqual(v2.stopReason, "budget_tokens", "★ 超了就停,原因单列 budget_tokens");
-      assert.ok(/只计量得到的部分/.test(require("./hostrun.js").REASONS.budget_tokens),
-        "停止原因要如实标注这是下界闸");
+      assert.ok(/measurable share only/.test(require("./hostrun.js").REASONS.budget_tokens),
+        "停止原因要如实标注这是下界闸(协调者可见的 label 是英文;用户看的翻译在观察面词典里)");
     } finally { prT.runRole = realT; }
     // 不限(0/不填)是首选
     const hT2 = require("./hostrun.js").create(function () {});
@@ -1225,9 +1226,9 @@ async function testPackaging() {
     assert.ok(/token 不限/.test(noTok), "不配就显示「token 不限」(首选)");
     // 配置卡与 schema
     const mcpT = fs.readFileSync(path.join(__dirname, "mcp.js"), "utf8");
-    assert.ok(/token预算/.test(mcpT) && /不限 \(Recommended\)/.test(mcpT),
+    assert.ok(/token_budget/.test(mcpT) && /Unlimited \(Recommended\)/.test(mcpT),
       "★ 配置卡要有 token 预算题,首选不限");
-    assert.ok(/tokens: \{ type: "number"/.test(mcpT) && /下界闸/.test(mcpT),
+    assert.ok(/tokens: \{ type: "number"/.test(mcpT) && /lower-bound gate/.test(mcpT),
       "schema 要写明 tokens 只计量得到的部分(下界闸)");
     ok("★ token 预算：首选不限、超了停 budget_tokens、不重复计汇总帧；角色行模型+token/量不到留空");
   }
@@ -1252,14 +1253,14 @@ async function testPackaging() {
     assert.ok(/在等实现者修/.test(hb.text),
       "★ 反驳者刚报完 → 心跳要点明「多半在等实现者修」,用户才知道静默是修不是卡");
     const v = await hO.gate();
-    assert.ok(/①实现者先修/.test(v.instruction) && /②反驳者重挖复检/.test(v.instruction),
+    assert.ok(/\(1\) the proposer fixes/.test(v.instruction) && /\(2\) the critic re-digs/.test(v.instruction),
       "★ 挖-修类未达标的 gate 指令要写死轮内顺序:先修再复挖 —— 反了会把没修的又数一遍");
-    assert.ok(/别并发/.test(v.instruction), "并明说挖和修有依赖,别并发");
+    assert.ok(/Do not parallelize/.test(v.instruction), "并明说挖和修有依赖,别并发");
     hO.end("stopped", "t");
     const skO = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-    assert.ok(/有依赖就串行,别并发/.test(skO) && /①实现者修上一轮挖出的问题/.test(skO),
+    assert.ok(/With dependencies, go serial/.test(skO) && /proposer fixes last round/.test(skO),
       "技能要写死挖-修类的轮内顺序(串行),并发只给互不依赖的角色");
-    assert.ok(/修的步骤一开工就要报/.test(skO),
+    assert.ok(/report the moment fixing starts/.test(skO),
       "修的步骤开工要 loop_say —— 「挖出 bug 后长时间没动静」的困惑就是这么来的");
     ok("★ 轮内顺序:挖-修类先修再复挖(写死)、心跳带主语点明在等谁");
   }
@@ -1298,7 +1299,7 @@ async function testPackaging() {
     // 只认「接了 onActivity」这个事实,不锁参数名(opts→o 这种重命名不该弄红这条)
     assert.ok(/\.onActivity/.test(jSrcA), "评审者在动时也要看得见");
     const hSrcA = fs.readFileSync(path.join(__dirname, "hostrun.js"), "utf8");
-    assert.ok(/评审者 · /.test(hSrcA), "runGate 给 judge 也接了活动流");
+    assert.ok(/judgeActivity/.test(hSrcA), "runGate 给 judge 也接了活动流(文案走 i18n 词典)");
     ok("★ 角色实时活动：→ Read/Grep 逐行直播(1.5s 节流)、带角色名、评审者同款");
   }
 
@@ -1538,10 +1539,10 @@ async function testPackaging() {
       "要写到 ~/.codex/prompts/code-forge.md（Codex 的用户级命令目录）");
     const cpAt = inst.indexOf("function codexPromptMarkdown");
     const cpMd = inst.slice(cpAt, inst.indexOf("const CODEX_PROMPT", cpAt));
-    assert.ok(/只做一件事：等目标/.test(cpMd), "codex 版也要有空目标处理（等输入）");
-    assert.ok(/编号列表/.test(cpMd) && !/AskUserQuestion/.test(cpMd),
+    assert.ok(/exactly one thing/.test(cpMd) && /wait for the goal/.test(cpMd), "codex 版也要有空目标处理（等输入）");
+    assert.ok(/numbered list/.test(cpMd) && !/AskUserQuestion/.test(cpMd),
       "★ codex 没有选项组件 —— 候选走编号列表,不许照抄 AskUserQuestion 那句");
-    assert.ok(/轮流/.test(cpMd), "codex 聊天没有子 agent —— 要写明自己按角色轮流发言");
+    assert.ok(/yourself in turn/.test(cpMd), "codex 聊天没有子 agent —— 要写明自己按角色轮流发言");
     assert.ok(/which\("codex"\)/.test(inst.slice(inst.indexOf("function installCodexPrompt"))),
       "没装 codex 就不碰它的目录");
     ok("★ Codex 聊天入口装上了：内容按 Codex 现实裁（编号列表/轮流扮演/空目标拦）");
@@ -1576,26 +1577,26 @@ async function testPackaging() {
       // ★ 红线在服务端拼,不信调用方会带
       assert.strictEqual(calls[0].role.permissionMode, "readOnly",
         "★ attack 角色必须走只读档（工具层约束,不是提示词请求）");
-      assert.ok(/不许改任何文件/.test(calls[0].prompt), "★ 反驳者的红线每次都要在提示词里");
+      assert.ok(/must not modify any file/.test(calls[0].prompt), "★ 反驳者的红线每次都要在提示词里");
       assert.ok(/修重复回调/.test(calls[0].prompt), "目标要带给独立进程（它看不见对话）");
       const said = evs.filter(function (e) { return e.t === "event" && e.role === "role2"; })[0];
       assert.ok(said && said.meta.executor === "dispatch", "留痕要标明是代派的");
       assert.ok(evs.some(function (e) { return e.t === "usage"; }), "★ 独立进程的用量要落账（这正是逐角色记账）");
 
       // 纪律:角色在 loop_begin 登记,不许临时发明;上下文必须带;没开局不许派
-      assert.ok(/不在本回环的角色表里/.test((await h.dispatch({ role: "裁判", prompt: "x" })).error));
-      assert.ok(/prompt 不能为空/.test((await h.dispatch({ role: "反驳者", prompt: "" })).error));
+      assert.ok(/is not in this loop/.test((await h.dispatch({ role: "裁判", prompt: "x" })).error));
+      assert.ok(/prompt must not be empty/.test((await h.dispatch({ role: "反驳者", prompt: "" })).error));
       const h2 = require("./hostrun.js").create(function () {});
-      assert.ok(/还没有 loop_begin/.test((await h2.dispatch({ role: "x", prompt: "y" })).error));
+      assert.ok(/No loop_begin yet/.test((await h2.dispatch({ role: "x", prompt: "y" })).error));
 
       // MCP 面:工具挂出来了、代理到 /host/agent、要求 role+prompt
       const TOOLS = require("./mcp.js").TOOLS;
       const la = TOOLS.filter(function (t) { return t.name === "loop_agent"; })[0];
       assert.ok(la, "★ MCP 要挂出 loop_agent");
       assert.deepStrictEqual(la.inputSchema.required, ["role", "prompt"], "role 和 prompt 必填");
-      assert.ok(/独立进程/.test(la.description) && /自动 loop_say/.test(la.description),
+      assert.ok(/standalone process/.test(la.description) && /auto-loop_say-ed/.test(la.description),
         "描述要说清:真隔离、结果自动留痕");
-      assert.ok(/Claude Code 里\*\*别用这个\*\*/.test(la.description),
+      assert.ok(/\*\*do not use this\*\*/.test(la.description),
         "★ Claude Code 有自己的 Task 子 agent —— 别绕到进程派发上,那更慢");
       const mcpSrc = fs.readFileSync(path.join(__dirname, "mcp.js"), "utf8");
       assert.ok(/loop_agent[\s\S]{0,200}\/host\/agent/.test(mcpSrc), "工具要代理到 /host/agent");
@@ -1604,9 +1605,9 @@ async function testPackaging() {
 
       // 入口指引:codex 的 /code-forge 用 loop_agent;SKILL 里退化顺序是 loop_agent → 轮流
       const instSrc2 = fs.readFileSync(path.join(__dirname, "install.js"), "utf8");
-      assert.ok(/loop_agent 把角色派成独立进程/.test(instSrc2), "codex 的 /code-forge 要指向 loop_agent");
+      assert.ok(/standalone processes via loop_agent/.test(instSrc2), "codex 的 /code-forge 要指向 loop_agent");
       const sk2 = fs.readFileSync(path.join(__dirname, "skills", "code-forge", "SKILL.md"), "utf8");
-      assert.ok(sk2.indexOf("loop_agent") < sk2.indexOf("轮流发言"),
+      assert.ok(sk2.indexOf("loop_agent") >= 0 && sk2.indexOf("loop_agent") < sk2.indexOf("playing roles yourself in turn"),
         "★ 无子 agent 的退化顺序:先 loop_agent（真隔离）,起不来才轮流扮演");
       ok("★ loop_agent：Codex 聊天里的角色也有真隔离（独立进程/只读档/逐角色记账/自动留痕）");
     } finally { perroleMod.runRole = realRunRole; }
@@ -1839,6 +1840,40 @@ async function testChatUsage() {
     "★ 示例角色 = 现役阵容(3 角色+判据),不许再出现协调者/裁判那套老剧本");
   assert.ok(demoEvs.some(function (e) { return e.role === "gate" && e.meta && e.meta.met === false; }),
     "★ 示例要有判据事件(meta.met) —— 判据走势区不覆盖,改它还得跑真回环");
+  /* ★ 提示词全英文 + UI 语言跟用户对话(用户点名)。lang 从 loop_begin 进,
+   *   落进 run.start,观察面词典按它取;事件里机器写的话由 i18n 表按回环 lang 出。 */
+  {
+    const i18nM = require("./i18n.js");
+    assert.ok(i18nM.T("en").reasons.goal_met && i18nM.T("zh").reasons.goal_met,
+      "i18n 双语表要齐(zh/en 停止原因)");
+    assert.strictEqual(i18nM.T("nope"), i18nM.T("zh"), "认不出的 lang 落回 zh(旧档案默认)");
+    const mcpL = fs.readFileSync(path.join(__dirname, "mcp.js"), "utf8");
+    assert.ok(/lang: \{/.test(mcpL) && /langOf/.test(mcpL),
+      "★ loop_begin 要收 lang,且能按目标文本自动判(CJK→zh)");
+    const evsL = [];
+    const hL = require("./hostrun.js").create(function (e) { evsL.push(e); });
+    hL.begin({ session: "en run", task: "fix the webhook", lang: "en",
+      goal: { command: "node -e 0", cwd: process.cwd() },
+      budget: { rounds: 2, seconds: 60 },
+      roles: [{ name: "proposer", kind: "propose" }, { name: "critic", kind: "attack" }],
+      quietWarnMs: 999999 });
+    const rsL = evsL.filter(function (e) { return e.t === "run.start"; })[0];
+    assert.strictEqual(rsL.lang, "en", "★ run.start 要带 lang —— 观察面词典按它取");
+    const gateRole = evsL.filter(function (e) { return e.t === "role.add" && e.id === "gate"; })[0];
+    assert.strictEqual(gateRole.name, "Gate", "★ lang=en 时判据角色名等机器文案按英文出");
+    const rd1 = evsL.filter(function (e) { return e.t === "round.start"; })[0];
+    assert.strictEqual(rd1.title, "Round 1", "轮标题同理");
+    hL.end("stopped", "t");
+    // TUI/网页词典:en 表齐、run.lang 接线
+    const tuiL = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
+    assert.ok(/function uiT\(lang\)/.test(tuiL) && /uiT\(run\.lang\)|uiT\(st\.run && st\.run\.lang\)/.test(tuiL),
+      "★ TUI 标签走 uiT(run.lang)");
+    const htmlL = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+    assert.ok(/function WT\(\)/.test(htmlL) && /STORE\.run && STORE\.run\.lang/.test(htmlL),
+      "★ 网页标签走 WT()(STORE.run.lang)");
+    ok("★ lang 全程贯通:loop_begin → run.start → 机器文案(i18n) → TUI/网页词典;默认回落 zh");
+  }
+
   // ★ 网页的 k1 要有 M 档(tui.kfmt 同款)。含缓存口径下总数轻松上百万 ——
   //   实测「13980.0k」被当成数字算错了报 bug,其实只是格式化只认 k
   assert.ok(/function k1\(n\)\{[^\n]*1e6[^\n]*M/.test(html),
@@ -2033,6 +2068,9 @@ async function testUsage() {
     "var FALLBACK_COLORS=['#111'];",
     "var state={round:null,follow:true,mode:'live',open:{},roleFilter:null};",
     "function refreshServer(){}",
+    // 切片环境里也要有词典(ensureRound 的默认轮标题走 WT)
+    grab(/var L10N = \{[\s\S]*?\n\};/),
+    grab(/function WT\(\)\{[\s\S]*?\n?\}/) || "function WT(){ return L10N.zh; }",
     grab(/function ensureRole\(id\)\{[\s\S]*?\n\}/),
     grab(/function ensureRound\(n\)\{[\s\S]*?\n\}/),
     grab(/function applyEvent\(ev\)\{[\s\S]*?\r?\n\}\r?\n/),   // index.html 是 CRLF,\n 死板会抓空
@@ -2431,12 +2469,12 @@ async function testPerRole() {
   });
   assert.ok(p.indexOf("修重复回调") >= 0, "要带任务");
   assert.ok(p.indexOf("pytest -q") >= 0, "要带判据命令");
-  assert.ok(/不许改它/.test(p), "要明写不许改判据");
+  assert.ok(/must not alter it/.test(p), "要明写不许改判据");
   assert.ok(p.indexOf("加了幂等键") >= 0, "★ 要带上本轮实现者说了什么，否则它在反驳空气");
   assert.ok(p.indexOf("FAILED test_dup") >= 0, "★ 要带上一轮判据输出，否则只会重复上一轮的改法");
   assert.ok(p.indexOf("并发下仍会重复") >= 0, "要带上一轮的反驳点");
-  assert.ok(/不许改任何文件/.test(p), "反驳者的职责里要写明不许改文件");
-  assert.ok(/不要调用任何 loop_\* 工具/.test(p),
+  assert.ok(/must not modify any file/.test(p), "反驳者的职责里要写明不许改文件");
+  assert.ok(/Do not call any loop_\* tool/.test(p),
     "★ 要明说别调 loop_*：本模式下协议由驱动方走，它调了只会被拦或搅乱账本");
   ok("★ 角色提示词自成一体（任务/判据/本轮他人发言/上轮失败/上轮反驳点/别调 loop_*）");
 
@@ -2545,8 +2583,8 @@ async function testJudge() {
   const REASONS = require("./hostrun.js").REASONS;
   assert.ok(REASONS.judged_met && REASONS.goal_met);
   assert.notStrictEqual(REASONS.judged_met, REASONS.goal_met);
-  assert.ok(/命令/.test(REASONS.goal_met), "goal_met 要写明是命令判过");
-  assert.ok(/评审/.test(REASONS.judged_met), "judged_met 要写明是评审判定");
+  assert.ok(/command/.test(REASONS.goal_met), "goal_met 要写明是命令判过(协调者可见 label,英文)");
+  assert.ok(/judge/.test(REASONS.judged_met), "judged_met 要写明是评审判定");
   assert.ok(REASONS.judge_broken, "评审判据自己坏了也要有一条原因");
   const tsrcJ = fs.readFileSync(path.join(__dirname, "tui.js"), "utf8");
   assert.ok(/judged_met: "达标停止（评审判定）"/.test(tsrcJ), "TUI 也要把两种达标分开显示");
@@ -2761,12 +2799,12 @@ async function testEnsureConsole() {
   async function driveToGo(state) {
     const handler = mcp.createHandler(state);
     let r = await callMcpTool(handler, "loop_begin", { task: "ensureConsole 回归测试目标" });
-    assert.strictEqual(r.json.步骤, "2/3 配置");
+    assert.strictEqual(r.json.step, "2/3 config");
     r = await callMcpTool(handler, "loop_begin", {
       token: r.json.token, goal: { command: "true" },
       budget: { rounds: 1, seconds: 60 }, roles: ROLES
     });
-    assert.strictEqual(r.json.步骤, "3/3 确认");
+    assert.strictEqual(r.json.step, "3/3 confirm");
     return callMcpTool(handler, "loop_begin", { token: r.json.token, go: true });
   }
 
@@ -2777,7 +2815,7 @@ async function testEnsureConsole() {
     process.env.CODE_FORGE_URL = state.base;
     const r1 = await driveToGo(state);
     assert.strictEqual(r1.isError, true);
-    assert.ok(/起不了监控台/.test(r1.text),
+    assert.ok(/Could not start the console/.test(r1.text),
       "★ 拉不起来要如实报「起不了监控台」,不能被内部异常顶替成「调用失败：Cannot read...」" +
       "（旧 bug：读了不存在的 r.state.base）。实际：" + r1.text);
     assert.strictEqual(typeof state.base, "string", "★ 失败路径上 state.base 也必须是正常字符串（不是 undefined）");

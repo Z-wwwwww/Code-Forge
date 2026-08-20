@@ -34,35 +34,38 @@ const usage = require("./usage.js");
 /** 评审者的提示词。**它必须自成一体** —— 独立会话,看不到任何人的历史。 */
 function judgePrompt(o) {
   const L = [];
-  L.push("你是一次对抗回环的**独立评审者**。你不参与改代码,只做一件事:判这次是否达标。");
+  L.push("You are the **independent judge** of an adversarial loop. You do not touch the code; " +
+    "you do exactly one thing: rule whether the goal has been met.");
   L.push("");
-  L.push("目标：" + (o.task || "（未给出）"));
+  L.push("Goal: " + (o.task || "(not given)"));
   L.push("");
-  L.push("判定标准（rubric，逐条判）：");
-  L.push(String(o.rubric || "（未给出 —— 那就按上面的目标逐条判）").trim());
+  L.push("Rubric (judge item by item):");
+  L.push(String(o.rubric || "(not given — judge item by item against the goal above)").trim());
   L.push("");
   if (o.command) {
-    L.push("⚠ 这次**还有**一条命令判据 `" + o.command + "`,它已经由代码跑过并且**通过**了。");
-    L.push("命令过了不代表目标达成 —— 你要判的正是命令覆盖不到的那部分。");
+    L.push("NOTE: there is **also** a command gate `" + o.command + "`, already run by code and it **passed**.");
+    L.push("A passing command does not mean the goal is met — your job is exactly the part the command cannot cover.");
     L.push("");
   }
-  L.push("这一轮各角色说了什么（他们的原话,仅供参考,**不要因为他们说达标就判达标**）：");
+  L.push("What each role said this round (their own words, for reference only — " +
+    "**do not rule MET just because they claim it**):");
   (o.said || []).forEach(function (s) {
-    L.push("【" + s.role + "】" + (s.summary || ""));
+    L.push("[" + s.role + "] " + (s.summary || ""));
     if (s.body) L.push(String(s.body).slice(0, 1200));
   });
-  if (!o.said || !o.said.length) L.push("（没有发言记录）");
+  if (!o.said || !o.said.length) L.push("(no statements recorded)");
   L.push("");
-  L.push("怎么判：**自己去读代码**。他们的自述可能不准,也可能只改了一半。");
-  L.push("你是只读的 —— 改不了任何文件,这是有意的:能顺手改代码的评审者可以先改好再判过。");
+  L.push("How to judge: **read the code yourself.** Their self-reports may be wrong or half-done.");
+  L.push("You are read-only — you cannot modify any file, deliberately: a judge who can quietly " +
+    "fix the code could fix it first and then pass it.");
   L.push("");
-  L.push("输出格式（**严格照这个,第一行必须是这个词**,驱动方按行解析）:");
-  L.push("VERDICT: MET        ← 达标");
-  L.push("VERDICT: NOT_MET    ← 未达标");
+  L.push("Output format (**exactly this; the first line must be this word** — the driver parses by line):");
+  L.push("VERDICT: MET        <- goal met");
+  L.push("VERDICT: NOT_MET    <- goal not met");
   L.push("");
-  L.push("第二行起:逐条说 rubric 的每一条过没过,每条都要**引用 `文件:行号` 作为证据**。");
-  L.push("拿不出证据的条目按未过算 —— 空口说「看起来不错」不是证据。");
-  L.push("最后一行以 `NEXT:` 开头,写未达标时下一轮该改什么(达标就写 NEXT: 无)。");
+  L.push("From line 2: state pass/fail for every rubric item, each **citing `file:line` as evidence**.");
+  L.push("Items without evidence count as failed — \"looks fine\" is not evidence.");
+  L.push("End with a line starting `NEXT:` — what to change next round if not met (write `NEXT: none` if met).");
   return L.join("\n");
 }
 
@@ -74,7 +77,7 @@ function parseVerdict(text, context) {
   const s = String(text || "");
   const m = /VERDICT:\s*(MET|NOT_MET)/i.exec(s);
   if (!m) {
-    return { broken: true, detail: "评审者没有给出 VERDICT 行,判不出结论" };
+    return { broken: true, detail: require("./i18n.js").T(context && context.lang).jNoVerdict };
   }
   const met = /^MET$/i.test(m[1]);
   // 证据 = 出现了 `文件:行号` 这种引用。**无证据的 MET 不算达标** ——
@@ -90,17 +93,18 @@ function parseVerdict(text, context) {
   }
   const evidence = (scanned.match(/[\w./\\-]+\.\w+:\d+/g) || []).slice(0, 20);
   const next = (/NEXT:\s*(.+)/i.exec(s) || [])[1] || "";
+  const ttv = require("./i18n.js").T(context && context.lang);
   if (met && !evidence.length) {
     return {
       met: false, broken: false, downgraded: true,
       evidence: [], next: next,
-      detail: "评审者判了 MET 但**一条证据都没给**（要引用 文件:行号）—— 按未达标算"
+      detail: ttv.jNoEvidence
     };
   }
   return {
     met: met, broken: false, evidence: evidence, next: next,
-    detail: (met ? "评审判定达标" : "评审判定未达标") +
-      (evidence.length ? " · " + evidence.length + " 处证据" : "")
+    detail: (met ? ttv.jMet : ttv.jNotMet) +
+      (evidence.length ? ttv.jEvidence(evidence.length) : "")
   };
 }
 
@@ -138,16 +142,17 @@ function pickReviewer(opts) {
  */
 async function check(o) {
   o = o || {};
+  const tt = require("./i18n.js").T(o.lang);
   if (!o.rubric && !o.task) {
-    return { met: false, broken: true, detail: "评审判据没有 rubric 也没有目标 —— 判不了" };
+    return { met: false, broken: true, detail: tt.jNoRubric };
   }
   const started = Date.now();
   const pick = pickReviewer(o);
-  if (pick.error) return { met: false, broken: true, detail: "起不了评审者：" + pick.error };
+  if (pick.error) return { met: false, broken: true, detail: tt.jCantStart + pick.error };
   const ad = pick.adapter;
   if (typeof ad.parse !== "function") {
     return { met: false, broken: true,
-      detail: ad.label + " 的输出格式没实测过，解不出评审者的裁定（换个宿主，或先给它写 parse）" };
+      detail: tt.jNoParse(ad.label) };
   }
 
   // 只读:宿主级强制。评审者能改文件的话,它可以先把问题改好再判过。
@@ -158,19 +163,19 @@ async function check(o) {
   delete env.CODE_FORGE_URL;
 
   const started2 = agentcli.run(args, { cwd: o.cwd || process.cwd(), env: env, bin: ad.bin });
-  if (started2.error) return { met: false, broken: true, detail: "起不了评审者：" + started2.error };
+  if (started2.error) return { met: false, broken: true, detail: tt.jCantStart + started2.error };
   const child = started2.child;
   const prompt = judgePrompt(o);
   try {
     if (ad.promptVia === "arg") child.stdin.end();
     else { child.stdin.write(prompt); child.stdin.end(); }
   } catch (e) {
-    return { met: false, broken: true, detail: "提示词写不进评审者的 stdin：" + e.message };
+    return { met: false, broken: true, detail: tt.jStdin + e.message };
   }
 
   const tracker = usage.createTracker({
-    source: ad.id + "（评审者）", soloLabel: "评审者",
-    soloKey: "role:评审者", model: pick.model || null
+    source: ad.id + " (judge)", soloLabel: tt.judgeRole,
+    soloKey: "role:judge", model: pick.model || null
   });
   let text = null;
   let buf = "";
@@ -230,7 +235,7 @@ async function check(o) {
     return Object.assign(base, { met: false, broken: true,
       detail: "评审者没有给出结论（退出码 " + done.code + "）" });
   }
-  return Object.assign(base, parseVerdict(text, { rubric: o.rubric, task: o.task }));
+  return Object.assign(base, parseVerdict(text, { rubric: o.rubric, task: o.task, lang: o.lang }));
 }
 
 module.exports = { check: check, parseVerdict: parseVerdict, judgePrompt: judgePrompt,

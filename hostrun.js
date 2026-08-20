@@ -15,29 +15,14 @@
 
 const gate = require("./gate.js");
 const chatusage = require("./chatusage.js");   // 聊天那条路的真模型/真用量(读 Claude Code 自己的子 agent 档案)
-const judge = require("./judge.js");   // 评审判据（不可量化目标）—— 判定人是独立评审者，不是协调者
+const judge = require("./judge.js");
+const i18n = require("./i18n.js");   // 事件里机器写的话按回环 lang 出(用户点名:UI 文字跟对话语言)   // 评审判据（不可量化目标）—— 判定人是独立评审者，不是协调者
 
-const REASONS = {
-  goal_met: "达标停止（命令判过）",
-  // ★ 评审判定**单列**,绝不混进 goal_met。一条命令的退出码可复现,一个模型的裁定不可 ——
-  //   回放一次运行时,「真跑过 pytest」和「某个评审者说了句达标」必须分得清。
-  judged_met: "达标停止（独立评审者判定，非命令）",
-  // 角色上报的指标(反驳者报「本轮挖到 N 个 bug」)也单列 —— 它和评审一样是模型的话,
-  // 可信度低于命令的退出码。回放时三种「达标」必须分得清。
-  reported_met: "达标停止（角色上报的指标，非命令）",
-  budget_tokens: "TOKEN 预算用尽（只计量得到的部分）",
-  budget_rounds: "到达轮数上限",
-  budget_time: "超出时限",
-  no_progress: "连续零进展",
-  // ★ 协调者的另一半职责:抓异常。这三种都不是「没达标」,是**流程出问题了**,
-  //   下一步动作完全不同 —— 所以各占一条停止原因,不许糊成 no_progress。
-  idle_spin: "空跑（没有任何角色真的改过东西）",
-  stalled: "长时间停滞（角色进程卡住被中止）",
-  stopped: "手动停止",
-  gate_broken: "判据本身失败",
-  judge_broken: "评审判据本身失败",
-  abandoned: "宿主放弃(说明见 detail)"
-};
+/* 停止原因的**键**是协议;给协调者看的 label 用英文表(提示词一律英文),
+ * 给用户看的翻译在 TUI/网页各自的词典里按 run.lang 取。
+ * ★ 评审判定/角色上报**单列**,绝不混进 goal_met —— 命令退出码可复现,模型的话不可;
+ * ★ idle_spin/stalled 是「流程出了问题」不是「没达标」,各占一条,不许糊成 no_progress。 */
+const REASONS = i18n.TABLES.en.reasons;
 
 function stamp() {
   const d = new Date();
@@ -115,21 +100,20 @@ function create(append) {
       warned++;
       if (warned > 6) return;   // 同一段静默别刷屏;下一条发言会重置
       const sec = Math.round((Date.now() - baseline) / 1000);
+      const tq = i18n.T(st.lang);
       append({ t: "run.streaming", role: "gate",
         text: (st.turns === 0
-          ? "开局 " + sec + "s 还没有任何角色发言 —— 执行者多半在读仓库/派活(大目标首轮 5~15 分钟正常)"
-          : "第 " + st.round + " 轮 · 距上一条发言已 " + sec + "s" +
-            (st.lastSay ? "（上一条:" + st.lastSay.name + "「" + st.lastSay.summary + "」" + (st.lastSay.kind === "attack" ? "，多半在等实现者修" : "，角色多半还在干活") + "）"
-              : " —— 角色多半还在干活(子 agent 一跑几分钟正常)")) +
-          (warned >= 3 ? "；一直这样就回执行者那头看看它是不是停了/在等审批" : "") });
+          ? tq.quietStart(sec)
+          : tq.quietRound(st.round, sec, st.lastSay)) +
+          (warned >= 3 ? tq.quietNag : "") });
     }, ms);
     quietTimer.unref && quietTimer.unref();
   }
 
   function begin(cfg) {
-    if (st.active) return { error: "已有回环在进行中,先 loop_end 或停止它" };
+    if (st.active) return { error: "A loop is already running - loop_end it or stop it first" };
     if (!cfg || !Array.isArray(cfg.roles) || !cfg.roles.length) {
-      return { error: "至少要有一个角色" };
+      return { error: "At least one role is required" };
     }
     const budget = Object.assign({ rounds: 8, seconds: 3600, noProgressRounds: 2 }, cfg.budget);
     // 轮数 0 = **不限轮**(「修到连续 N 轮挖不出 bug」这类目标本来就说不准要几轮)。
@@ -142,17 +126,20 @@ function create(append) {
     // 时限:同样规范成非负整数,配合 remaining() 里「0 = 不限」的处理
     budget.seconds = Math.max(0, Math.floor(Number(budget.seconds) || 0));
     const PALETTE = ["#6FD3C7", "#E2707A", "#E8C468", "#7EA8F0", "#63C68E", "#C08CF0", "#E29A6B", "#8B95A2"];
+    // UI 语言:loop_begin 带来的 lang(按用户对话语言),事件里机器写的话都按它出
+    const tt = i18n.T(cfg.lang);
     const roles = cfg.roles.map(function (r, i) {
       return {
-        id: r.id || ("role" + (i + 1)), name: r.name || ("角色 " + (i + 1)),
+        id: r.id || ("role" + (i + 1)), name: r.name || tt.roleN(i + 1),
         duty: r.duty || "", kind: r.kind || "propose",
         color: r.color || PALETTE[i % PALETTE.length],
-        model: r.model || "宿主模型"
+        model: r.model || tt.hostModel
       };
     });
 
     st.active = true;
     st.cfg = Object.assign({}, cfg, { budget: budget, roles: roles });
+    st.lang = cfg.lang || "zh";
     st.round = 1; st.startedAt = Date.now();
     st.lastValue = null; st.noProgress = 0; st.gatePassed = false;
     // 连胜判据:goal.streak = K 表示「连续 K 轮判过才算达标」。
@@ -173,28 +160,29 @@ function create(append) {
 
     append({
       t: "run.start",
-      session: cfg.session || "未命名回环",
+      session: cfg.session || tt.unnamedRun,
       repo: cfg.repo || "", branch: cfg.branch || "",
-      client: cfg.client || "宿主 agent", version: cfg.version || "host",
+      client: cfg.client || tt.hostAgent, version: cfg.version || "host",
       mode: "host",
+      lang: st.lang,   // ★ 观察面(TUI/网页)按它取词典 —— UI 语言跟用户对话语言
       goal: [cfg.goal && cfg.goal.command,
         cfg.goal && cfg.goal.metric && cfg.goal.metric.name
           ? cfg.goal.metric.name + (cfg.goal.metric.min != null ? " ≥ " + cfg.goal.metric.min : "")
-          : null].filter(Boolean).join(" 且 ") || "(未配置判据)",
+          : null].filter(Boolean).join(tt.goalJoin) || tt.noGoal,
       budget: budget
     });
     roles.forEach(function (r) {
       append({ t: "role.add", id: r.id, name: r.name, model: r.model, color: r.color, duty: r.duty });
     });
     append({
-      t: "role.add", id: "gate", name: "判据", model: "确定性 · 无模型", color: "#5B6470",
-      duty: (cfg.goal && cfg.goal.command) ? "跑 " + cfg.goal.command : "未配置 —— 无法判定达标"
+      t: "role.add", id: "gate", name: tt.gateName, model: tt.gateModel, color: "#5B6470",
+      duty: tt.gateDuty(cfg.goal && cfg.goal.command)
     });
     // 角色表定了才建得起来 —— 认档案靠的就是角色名与 kind
     // cwd:优先用协调者带过来的(它在你干活的目录里),其次判据命令的目录,最后才是本进程的
     puller = chatusage.createPuller({ roles: roles, sinceMs: st.startedAt,
       cwd: cfg.cwd || (cfg.goal && cfg.goal.cwd) || process.cwd() });
-    append({ t: "round.start", n: 1, title: "第 1 轮对抗", meta: stamp() + " → 进行中" });
+    append({ t: "round.start", n: 1, title: tt.roundTitle(1), meta: stamp() + " → " + tt.inProgress });
     // 静默看门狗:第一条 loop_say 到来之前,每隔一阵在直播里报一声「还没人发言」——
     // 空屏 + 无解释是最坏的等待。quietWarnMs 可配只为测试(默认 90s)。
     armQuietWatch(Math.max(50, Number(cfg.quietWarnMs) || 90000));
@@ -203,17 +191,17 @@ function create(append) {
       runId: st.startedAt, round: 1, roles: roles.map(function (r) { return { id: r.id, name: r.name, kind: r.kind }; }),
       gateConfigured: !!(cfg.goal && cfg.goal.command),
       note: (cfg.goal && cfg.goal.command)
-        ? "达标由 loop_gate 判定。你不得自行宣布达成。"
-        : "没有判据命令 —— 这次回环无法判定达标,只能靠轮数/时限停。页面会如实标「未判定」。"
+        ? "Success is ruled by loop_gate only. You must not declare the goal met yourself."
+        : "No gate command - this loop cannot rule the goal met; only round/time limits can stop it. The page will honestly show it as not-judged."
     };
   }
 
   /** 记一个角色这一轮说了什么。宿主报不出 token 就别编,留空即可。 */
   function say(ev) {
-    if (!st.active) return { error: "还没有 loop_begin" };
+    if (!st.active) return { error: "No loop_begin yet" };
     const known = st.cfg.roles.filter(function (r) { return r.id === ev.role || r.name === ev.role; })[0];
     if (!known) {
-      return { error: "角色 «" + ev.role + "» 不在本回环的角色表里(" +
+      return { error: "Role \"" + ev.role + "\" is not in this loop's role table (" +
         st.cfg.roles.map(function (r) { return r.id; }).join(", ") + ")" };
     }
     st.turns++;
@@ -259,12 +247,12 @@ function create(append) {
    * 命令过了也不代表目标达成 —— 评审判的正是命令覆盖不到的那部分。
    */
   async function runGate(opts) {
-    if (!st.active) return { error: "还没有 loop_begin" };
+    if (!st.active) return { error: "No loop_begin yet" };
     // 重入锁:判据是唯一能改「达标与否」状态(metStreak/round/gatePassed)的地方,
     // 两次并发的 loop_gate 若都跑到底,会各自 metStreak++ —— 一轮就能把连胜刷成 2。
     // 第二次调用直接被拒,调用方老老实实等第一次的结果。
     if (st.gateRunning) {
-      return { error: "上一次 loop_gate 还没跑完 —— 判据不可重入,等它返回结果再调" };
+      return { error: "The previous loop_gate is still running - the gate is not reentrant; wait for its result" };
     }
     st.gateRunning = true;
     try {
@@ -310,20 +298,19 @@ function create(append) {
       const say = evalSayMetric();
       g = say.v == null
         ? { met: false, value: null, broken: false, ms: 0, fp: null, output: "",
-            skipped: "本轮没人报 " + (m.name || "指标") +
-              " —— 反驳者/复核者 loop_say 要带 value(本轮量出来的数);实现者报的不算" }
+            skipped: i18n.T(st.lang).saidNone(m.name || i18n.T(st.lang).gateLabel) }
         : { met: say.ok, value: say.v, broken: false, ms: 0,
             // 指纹用「轮次:值」—— 连续同值是这种判据的预期形态,零进展闸门另有 met 分支护着
             fp: null, output: "",
-            detail: (m.name || "指标") + " = " + say.v + "（" + say.role + " 报的,要求 " + say.range + "）" };
+            detail: i18n.T(st.lang).saidDetail(m.name || i18n.T(st.lang).gateLabel, say.v, say.role, say.range) };
     } else {
-      g = await gate.check(goal);
+      g = await gate.check(goal, st.lang);
       // command(/rubric)判据之外**同时**配了 say 指标 —— 两边都得过,say 不能被静默吞掉
       if (hasSayMetric) {
         const say = evalSayMetric();
         const sayDetail = say.v != null
           ? (m.name || "指标") + "(say) = " + say.v + "（" + say.role + " 报的,要求 " + say.range + "）"
-          : "本轮没人报 " + (m.name || "指标") + "(say)";
+          : i18n.T(st.lang).saidNoneShort(m.name || i18n.T(st.lang).gateLabel);
         g = Object.assign({}, g, {
           met: !!g.met && say.ok,
           detail: (g.detail || "") + " · " + sayDetail
@@ -338,9 +325,9 @@ function create(append) {
       append({
         t: "event", round: st.round, role: "gate", kind: "test",
         ts: stamp(), dur: ((g.ms || 0) / 1000).toFixed(1) + "s", tok: { in: 0, out: 0 },
-        summary: g.skipped ? "未判定：" + g.skipped
-          : (g.met ? "达标 · " + g.detail : "未达标 · " + g.detail),
-        body: [g.detail, g.output ? "\n--- 命令输出（尾部）---\n" + g.output : ""].join("\n"),
+        summary: g.skipped ? i18n.T(st.lang).notJudged + g.skipped
+          : (g.met ? i18n.T(st.lang).metPrefix + g.detail : i18n.T(st.lang).notMetPrefix + g.detail),
+        body: [g.detail, g.output ? i18n.T(st.lang).outputTail + g.output : ""].join("\n"),
         // ★ 带上明确的 met —— 界面不许靠摘要文字去推「过没过」(踩过:评审那条摘要是
         //   「评审判定达标」,而走势那行用 /^达标/ 匹配,于是判过的轮次显示成未过)
         meta: { met: !!g.met, exitCode: g.exitCode, value: g.value,
@@ -352,7 +339,7 @@ function create(append) {
     let j = null;
     if (hasRubric && cmdOk && !g.broken) {
       j = await judge.check({
-        task: st.cfg.task || st.cfg.session, rubric: goal.rubric,
+        task: st.cfg.task || st.cfg.session, rubric: goal.rubric, lang: st.lang,
         cwd: st.cfg.cwd || (st.cfg.goal && st.cfg.goal.cwd) || process.cwd(),
         command: hasCmd ? goal.command : null,
         said: (opts && opts.said) || [], round: st.round,
@@ -366,7 +353,7 @@ function create(append) {
             if (now - lastJ < 1500) return;
             lastJ = now;
             append({ t: "run.streaming", role: "gate",
-              text: "评审者 · " + String(line).slice(0, 90) });
+              text: i18n.T(st.lang).judgeActivity + String(line).slice(0, 90) });
           };
         })()
       });
@@ -374,9 +361,10 @@ function create(append) {
       append({
         t: "event", round: st.round, role: "gate", kind: "audit",
         ts: stamp(), dur: ((j.ms || 0) / 1000).toFixed(1) + "s",
-        summary: (j.broken ? "评审判据失败：" : (j.met ? "评审判定达标 · " : "评审判定未达标 · ")) + j.detail,
-        body: [j.detail, j.next ? "\n下一轮该改：" + j.next : "",
-          j.output ? "\n--- 评审者原话（尾部）---\n" + j.output : ""].join("\n"),
+        summary: (j.broken ? i18n.T(st.lang).judgeBroken
+          : (j.met ? i18n.T(st.lang).judgeMet : i18n.T(st.lang).judgeNotMet)) + j.detail,
+        body: [j.detail, j.next ? i18n.T(st.lang).judgeNext + j.next : "",
+          j.output ? i18n.T(st.lang).judgeTail + j.output : ""].join("\n"),
         meta: {
           met: !!j.met, executor: "judge", judge: true, broken: !!j.broken,
           model: j.model, agent: j.agent, evidence: (j.evidence || []).length,
@@ -392,7 +380,7 @@ function create(append) {
     // 的 metStreak++/round.end/finish 全按新局的状态去改)。st.startedAt !== gen
     // 就是「已经换局」的证据,跟 !st.active 一样都要作废。
     if (!st.active || st.startedAt !== gen) {
-      return { error: "回环在判据跑的时候已经结束或换局了(loop_end/新一局 loop_begin 先到),这次判据结果作废" };
+      return { error: "The loop ended or was replaced while the gate was running (loop_end / a new loop_begin arrived first); this gate result is void" };
     }
 
     // 达标 = 该过的都过了。命令是硬门槛,评审是它覆盖不到的那部分。
@@ -459,17 +447,17 @@ function create(append) {
         : null;
 
     // 裁决那一行要说清是**谁**判的 —— 评审判过和命令判过不该看起来一样
-    const kindLabel = hasRubric ? "评审" : "判据";
+    const kindLabel = hasRubric ? i18n.T(st.lang).judgeLabel : i18n.T(st.lang).gateLabel;
     const detailAll = [
       (hasCmd || hasSay) ? (g.skipped ? "未判定：" + g.skipped : g.detail) : null,
-      j ? "评审：" + j.detail : null,
+      j ? i18n.T(st.lang).judgePrefix + j.detail : null,
       anomaly
     ].filter(Boolean).join(" ｜ ");
     append({
       t: "round.end", n: st.round,
-      winner: streakDone ? kindLabel + " · 达标"
-        : met ? kindLabel + " · 本轮过（连胜 " + st.metStreak + "/" + need + "）"
-        : "未达标",
+      winner: streakDone ? i18n.T(st.lang).roundMetFinal(kindLabel)
+        : met ? i18n.T(st.lang).roundMetStreak(kindLabel, st.metStreak, need)
+        : i18n.T(st.lang).roundNotMet,
       winnerRole: met ? "gate" : null,
       score: detailAll || "—"
     });
@@ -481,9 +469,9 @@ function create(append) {
       streak: need > 1 ? { need: need, have: st.metStreak } : null,
       // 判不了要先说判不了 —— agent 拿到的第一句话必须是「为什么没有结论」,
       // 而不是一句听起来像结论的话
-      detail: detailAll || ("未判定：" + (g.skipped || "没有判据")),
+      detail: detailAll || (i18n.T(st.lang).notJudged + (g.skipped || i18n.T(st.lang).noGate2)),
       output: [g.output ? g.output.slice(-1000) : "",
-        j && j.output ? "\n--- 评审者 ---\n" + j.output.slice(-1000) : ""].join(""),
+        j && j.output ? i18n.T(st.lang).judgeShortTail + j.output.slice(-1000) : ""].join(""),
       // 让宿主也知道这次是谁判的:它收尾时要如实说停止原因,不能把评审判过说成命令判过
       judgedBy: hasRubric ? "reviewer" : hasSay ? "attacker-report" : "command",
       judge: j ? { met: !!j.met, model: j.model, evidence: (j.evidence || []).length,
@@ -506,19 +494,22 @@ function create(append) {
       st.actedThisRound = null;   // 逐轮重置回「不知道」,否则第一轮动过手就永远不算空跑
       st.saidValue = null;        // 上一轮报的数过期 —— 反驳者这一轮得重新挖、重新报
       st.stalls = [];
-      append({ t: "round.start", n: st.round, title: "第 " + st.round + " 轮对抗", meta: stamp() + " → 进行中" });
+      append({ t: "round.start", n: st.round, title: i18n.T(st.lang).roundTitle(st.round), meta: stamp() + " → " + i18n.T(st.lang).inProgress });
       verdict.nextRound = st.round;
       verdict.instruction = (met
-        ? "本轮判过,但判据要求**连续 " + need + " 轮**都过（现在 " + st.metStreak + "/" + need +
-          "）。还不算达标 —— 下一轮反驳者接着挖,实现者待命修;断一次就从头攒。开第 " + st.round + " 轮。"
+        ? "This round passed, but the gate requires **" + need + " consecutive** passing rounds (now " +
+          st.metStreak + "/" + need + "). Not met yet - next round the critic keeps digging while the " +
+          "proposer stands by to fix; a miss resets the streak. Start round " + st.round + "."
         : hasSay
           // 挖-修类的轮内顺序是死的:先修上一轮挖出的,再让反驳者重挖复检报数 ——
           // 顺序反了(先挖)会把还没修的又数一遍,白烧一轮
-          ? "未达标。第 " + st.round + " 轮按这个顺序走:①实现者先修上面报出的问题(一开工就 loop_say);" +
-            "②反驳者重挖复检,把本轮还能挖到的数用 value 报上来;③loop_gate。别并发 —— 挖和修有依赖。"
-          : "未达标。把判据输出里的失败信息带回给各角色,开第 " + st.round + " 轮。") +
+          ? "Not met. Round " + st.round + " runs strictly in this order: (1) the proposer fixes the " +
+            "issues reported above (loop_say as soon as it starts); (2) the critic re-digs and re-checks, " +
+            "reporting this round's count via value; (3) loop_gate. Do not parallelize - digging depends on fixing."
+          : "Not met. Carry the failure output back to the roles and start round " + st.round + ".") +
         (st.idleRounds > 0
-          ? "⚠ 上一轮没有任何角色改过文件 —— 先确认实现者是不是权限不够、或者以为只要做分析。"
+          ? " WARNING: no role changed any file last round - check whether the proposer lacks write " +
+            "permission or believes analysis alone suffices."
           : "");
     }
     return verdict;
@@ -543,15 +534,15 @@ function create(append) {
   // 只挡 goal_met 会漏掉另外两条:agent 照样能拿 judged_met/reported_met 自己发合格证。
   const MET_REASONS = { goal_met: true, judged_met: true, reported_met: true };
   function end(reason, detail) {
-    if (!st.active) return { error: "当前没有在进行的回环" };
+    if (!st.active) return { error: "No loop is currently running" };
     if (MET_REASONS[reason] && !st.gatePassed) {
       // 连胜判据攒到一半时这句必须把进度说出来 —— 「还没判过」对着 2/3 的 agent 是错的
       const need = Math.max(1, Math.floor(Number(st.cfg.goal && st.cfg.goal.streak) || 1));
       return {
-        error: "拒绝：判据还没有判过达标" +
-          (need > 1 ? "（要求连续 " + need + " 轮判过,现在 " + st.metStreak + "/" + need + "）" : "") +
-          ",不能以 goal_met 收工。先调 loop_gate。",
-        hint: "达标与否由代码算。若你确实要放弃,用 reason=\"abandoned\" 并在 detail 里说明为什么。"
+        error: "Rejected: the gate has not ruled the goal met" +
+          (need > 1 ? " (requires " + need + " consecutive passing rounds; currently " + st.metStreak + "/" + need + ")" : "") +
+          ", so ending with goal_met is not allowed. Call loop_gate first.",
+        hint: "Success is computed by code. If you truly want to give up, use reason=\"abandoned\" and explain why in detail."
       };
     }
     const r = REASONS[reason] ? reason : "abandoned";
@@ -570,20 +561,20 @@ function create(append) {
    * 结果**自动 loop_say**:留痕不该依赖调用方记得再报一遍;它忘了,页面上就是空的。
    */
   async function dispatch(args) {
-    if (!st.active) return { error: "还没有 loop_begin" };
+    if (!st.active) return { error: "No loop_begin yet" };
     const roleName = String(args.role || "").trim();
     const known = st.cfg.roles.filter(function (r) {
       return r.id === roleName || r.name === roleName;
     })[0];
     if (!known) {
-      return { error: "角色 «" + roleName + "» 不在本回环的角色表里(" +
+      return { error: "Role \"" + roleName + "\" is not in this loop's role table (" +
         st.cfg.roles.map(function (r) { return r.id + "=" + r.name; }).join(", ") +
-        ")。角色在 loop_begin 时登记,这里不许临时发明。" };
+        "). Roles are registered at loop_begin; inventing new ones here is not allowed." };
     }
     const brief = String(args.prompt || "").trim();
     if (!brief) {
-      return { error: "prompt 不能为空 —— 独立进程看不见你的对话,上下文要全部带过去" +
-        "(目标、这一轮别人说了什么、判据上次的失败输出)。" };
+      return { error: "prompt must not be empty - the standalone process cannot see your conversation; " +
+        "carry the full context over (goal, what others said this round, last gate failure output)." };
     }
 
     const perrole = require("./perrole.js");
@@ -592,10 +583,10 @@ function create(append) {
     let ad = null;
     if (args.agent) {
       ad = adapters.get(String(args.agent));
-      if (!ad) return { error: "不认识的宿主：" + args.agent };
+      if (!ad) return { error: "Unknown host CLI: " + args.agent };
     } else {
       ad = adapters.all().filter(function (a) { return agentcli.which(a.bin); })[0];
-      if (!ad) return { error: "这台机器上一个 coding agent CLI 都没找到" };
+      if (!ad) return { error: "No coding-agent CLI found on this machine" };
     }
 
     const kind = known.kind || "attack";
@@ -605,14 +596,16 @@ function create(append) {
       permissionMode: perrole.DEFAULT_PERM[kind] || "readOnly"
     };
     const cwd = st.cfg.cwd || (st.cfg.goal && st.cfg.goal.cwd) || process.cwd();
-    // 角色头写在服务端,不信调用方会带 —— 红线(反驳者不许改文件)必须每次都在
+    // 角色头写在服务端,不信调用方会带 —— 红线(反驳者不许改文件)必须每次都在。
+    // 提示词一律英文(用户点名);角色名保持原样(那是 UI/账目的键)
     const prompt = [
-      "你是对抗回环里的「" + role.name + "」。职责：" + (perrole.DUTY[kind] || known.duty || ""),
-      "目标：" + (st.cfg.task || st.cfg.session || ""),
+      "You are the \"" + role.name + "\" in an adversarial loop. Duty: " + (perrole.DUTY[kind] || known.duty || ""),
+      "Goal: " + (st.cfg.task || st.cfg.session || ""),
       "",
       brief,
       "",
-      "把结论直接写成最终答复 —— 它会被原样带回对抗回环。不要调用任何 loop_* 工具。"
+      "Write your conclusion directly as the final reply — it is carried back into the loop verbatim. " +
+      "Do not call any loop_* tool."
     ].join(String.fromCharCode(10));
 
     // 实时活动:像 Claude Code 的 TUI 那样,角色在动时看得见它在干什么。
@@ -629,18 +622,18 @@ function create(append) {
           text: known.name + " · " + String(line).slice(0, 90) });
       }
     });
-    if (res.error) return { error: role.name + " 起不来：" + res.error };
+    if (res.error) return { error: role.name + " failed to start: " + res.error };
     addUsage(res.usageEvents);
     if (res.modelRejected) {
-      return { error: "模型 " + res.modelRejected + " 在 " + ad.label +
-        " 上用不了(版本/账号不支持) —— 换一个,或不指定用默认。" };
+      return { error: "Model " + res.modelRejected + " is not usable on " + ad.label +
+        " (version/account) - pick another, or omit it to use the default." };
     }
     const text = res.text || "";
     // 纯空白(" "/"\n\n")能骗过 !text 但骗不过 !text.trim() —— 不挡住的话下面
     // split("\n").filter(...)[0] 会因为空数组的 [0] 是 undefined 而抛 TypeError
     if (!text || !text.trim()) {
-      return { error: role.name + " 没有产出最终答复(exit " + res.exitCode +
-        (res.stalled ? "，卡住被中止" : "") + ")。日志尾部：" +
+      return { error: role.name + " produced no final reply (exit " + res.exitCode +
+        (res.stalled ? ", stalled and aborted" : "") + "). Log tail: " +
         (res.logs || []).slice(-3).join(" | ") };
     }
     // 自动留痕 —— wrote/stalled 是**观察到的**,不靠 agent 自报
@@ -649,12 +642,12 @@ function create(append) {
       summary: text.split(String.fromCharCode(10)).filter(function (l) { return l.trim(); })[0].slice(0, 120),
       body: text,
       meta: { wrote: res.wrote, stalled: res.stalled, executor: "dispatch",
-        agent: ad.id, model: role.model || "（宿主默认）" }
+        agent: ad.id, model: role.model || "(host default)" }
     });
     return {
       text: text, wrote: res.wrote, stalled: res.stalled,
       said: true, agent: ad.id, model: role.model || null,
-      注意: "结果已自动 loop_say,不必再报一遍。"
+      note: "The result was auto-loop_say-ed; do not report it again."
     };
   }
 

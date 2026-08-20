@@ -74,19 +74,20 @@ function runCommand(command, cwd, timeoutMs) {
  * goal = { command, cwd, timeoutMs, metric: { name, pattern, min, max } }
  * metric.pattern 是正则,第一个捕获组当数字用。
  */
-async function check(goal) {
+async function check(goal, lang) {
+  const tt = require("./i18n.js").T(lang);   // 判据结论会进事件档案,按回环 lang 出词
   if (!goal || !goal.command) {
-    return { met: false, skipped: "未配置判据命令", detail: "没有可判定的目标 —— 只能靠预算闸停止" };
+    return { met: false, skipped: tt.gNoCmd, detail: tt.gNoCmdDetail };
   }
   const r = await runCommand(goal.command, goal.cwd, goal.timeoutMs);
   const out = { exitCode: r.code, ms: r.ms, output: r.out.slice(-4000), fp: fingerprint(r.out) };
 
   if (r.spawnFailed) {
     // 命令都起不来,这不是「没达标」,是判据本身坏了 —— 必须说清楚,不许静默当未达标
-    return Object.assign(out, { met: false, broken: true, detail: "判据命令无法执行：" + r.out.slice(0, 200) });
+    return Object.assign(out, { met: false, broken: true, detail: tt.gCantRun + r.out.slice(0, 200) });
   }
   if (r.timedOut) {
-    return Object.assign(out, { met: false, broken: true, detail: "判据命令超时被中止" });
+    return Object.assign(out, { met: false, broken: true, detail: tt.gTimeout });
   }
   // shell:true 之下「命令不存在」不会让 spawn 失败,而是由 shell 用哨兵退出码报出来:
   // POSIX 127 / cmd.exe 9009。不认这两个数,「判据打错字」就会被当成「测试没过」,
@@ -98,7 +99,7 @@ async function check(goal) {
       /not recognized as an internal|command not found|No such file or directory/i.test(r.out) ||
       /不是内部或外部命令|无法将|不是可运行的程序/.test(r.out))) {
     return Object.assign(out, { met: false, broken: true,
-      detail: "判据命令找不到（exit " + r.code + "）：" + (r.out.split("\n")[0] || "").slice(0, 160) });
+      detail: tt.gNotFound(r.code, (r.out.split("\n")[0] || "").slice(0, 160)) });
   }
 
   let value = null;
@@ -107,7 +108,7 @@ async function check(goal) {
     let m = null;
     try { m = new RegExp(goal.metric.pattern).exec(r.out); }
     catch (e) {
-      return Object.assign(out, { met: false, broken: true, detail: "指标正则无法编译：" + e.message });
+      return Object.assign(out, { met: false, broken: true, detail: tt.gBadRegex + e.message });
     }
     if (m && m[1] !== undefined && m[1] !== "") {
       value = parseFloat(m[1]);
@@ -121,16 +122,15 @@ async function check(goal) {
   }
 
   const codeOk = r.code === 0;
-  const parts = ["exit " + r.code];
+  const parts = [tt.gExit(r.code)];
   if (goal.metric && goal.metric.pattern) {
-    parts.push((goal.metric.name || "指标") + " " +
-      (value == null ? "未抓到" : value) +
-      (goal.metric.min != null ? " / 需 ≥ " + goal.metric.min : "") +
-      (goal.metric.max != null ? " / 需 ≤ " + goal.metric.max : ""));
+    parts.push(tt.gMetric(goal.metric.name || tt.gateLabel, value,
+      (goal.metric.min != null ? ">= " + goal.metric.min : "") +
+      (goal.metric.max != null ? (goal.metric.min != null ? ", " : "") + "<= " + goal.metric.max : "")));
   }
   return Object.assign(out, {
     met: codeOk && metricOk,
-    metric: goal.metric ? (goal.metric.name || "指标") : null,
+    metric: goal.metric ? (goal.metric.name || tt.gateLabel) : null,
     value: value,
     detail: parts.join(" · ")
   });

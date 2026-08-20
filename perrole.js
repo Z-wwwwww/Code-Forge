@@ -75,12 +75,16 @@ const DEFAULT_PERM = {
   propose: "acceptEdits", attack: "readOnly", audit: "readOnly", verdict: "readOnly"
 };
 
+// ★ 提示词一律英文(用户点名):模型面前的文字全英文,UI 语言另走 lang 词典
 const DUTY = {
-  propose: "读代码,提出**最小侵入**的改法并**落地**(真的改文件)。不追求漂亮,只追求过判据。",
-  attack: "只找反例。找出这个改法在哪些情况下失效、哪些入口没覆盖、判据有没有被糊弄过去。" +
-    "**你不许改任何文件** —— 一个能顺手把问题抹平的反驳者等于没有反驳者。",
-  audit: "判据已经判绿了。只回答一个问题:这是真修好了,还是把判据糊弄过去了?只读。",
-  verdict: "看证据下结论。"
+  propose: "Read the code, devise the **least-invasive** change and **land it** (actually edit files). " +
+    "Do not chase elegance; the only goal is passing the gate.",
+  attack: "Hunt counterexamples only. Find where the change breaks, which entry points it misses, " +
+    "and whether the gate was gamed rather than satisfied. " +
+    "**You must not modify any file** — a critic who can quietly patch over problems is no critic at all.",
+  audit: "The gate has just turned green. Answer exactly one question: is this genuinely fixed, " +
+    "or was the gate gamed? Read-only.",
+  verdict: "Weigh the evidence and rule."
 };
 
 function parseRoleSpec(spec) {
@@ -135,28 +139,28 @@ function rolePrompt(ctx) {
   const r = ctx.role;
   const g = ctx.goal || {};
   const L = [];
-  L.push("你是一次对抗回环里的「" + r.name + "」。现在是第 " + ctx.round + " 轮" +
-    (ctx.budget && ctx.budget.rounds ? "（上限 " + ctx.budget.rounds + " 轮）" : "") + "。");
+  L.push("You are the \"" + r.name + "\" in an adversarial loop. This is round " + ctx.round +
+    (ctx.budget && ctx.budget.rounds ? " (max " + ctx.budget.rounds + " rounds)" : "") + ".");
   L.push("");
-  L.push("任务：" + (ctx.task || "见判据"));
+  L.push("Task: " + (ctx.task || "see the gate command"));
   L.push("");
-  L.push("判据命令：" + (g.command ? "`" + g.command + "`" : "（没有 —— 这次判不出达标）"));
-  L.push("**判据由驱动方跑,不是你跑。你不许改它** —— 不放宽阈值、不注释掉失败用例、" +
-    "不换一条更好过的命令。那是把尺子锯短。");
+  L.push("Gate command: " + (g.command ? "`" + g.command + "`" : "(none — success cannot be judged this run)"));
+  L.push("**The gate is run by the driver, not by you, and you must not alter it** — no loosening " +
+    "thresholds, no commenting out failing tests, no swapping in an easier command. That is sawing off the ruler.");
   if (g.metric && g.metric.name) {
-    L.push("指标：" + g.metric.name +
-      (g.metric.min != null ? " 需 ≥ " + g.metric.min : "") +
-      (g.metric.max != null ? " 需 ≤ " + g.metric.max : ""));
+    L.push("Metric: " + g.metric.name +
+      (g.metric.min != null ? " must be >= " + g.metric.min : "") +
+      (g.metric.max != null ? " must be <= " + g.metric.max : ""));
   }
   L.push("");
-  L.push("你这一轮要做的：" + (r.duty || DUTY[r.kind] || DUTY.propose));
+  L.push("Your job this round: " + (r.duty || DUTY[r.kind] || DUTY.propose));
 
   // 上一轮为什么没过 —— 没有这一段,实现者只会重复上一轮的改法
   if (ctx.lastGate) {
     L.push("");
-    L.push("【上一轮判据结果】" + (ctx.lastGate.detail || ""));
+    L.push("[Last round's gate result] " + (ctx.lastGate.detail || ""));
     if (ctx.lastGate.output) {
-      L.push("命令输出（尾部）：");
+      L.push("Command output (tail):");
       L.push("```");
       L.push(String(ctx.lastGate.output).slice(-1500));
       L.push("```");
@@ -165,23 +169,23 @@ function rolePrompt(ctx) {
   // 本轮已发言的角色 —— 反驳者要看到实现者刚做了什么,否则它在反驳空气
   (ctx.said || []).forEach(function (s) {
     L.push("");
-    L.push("【本轮 " + s.role + " 说】" + s.summary);
+    L.push("[This round, " + s.role + " said] " + s.summary);
     if (s.body) L.push(String(s.body).slice(0, 2000));
   });
   // 上一轮反驳者提过什么 —— 实现者这一轮该正面回应
   if (ctx.lastAttacks && ctx.lastAttacks.length) {
     L.push("");
-    L.push("【上一轮反驳者提过的问题（这一轮要正面回应）】");
+    L.push("[Issues the critic raised last round — address them head-on this round]");
     ctx.lastAttacks.forEach(function (s) { L.push("- " + s.summary); });
   }
 
   L.push("");
-  L.push("输出格式（**严格照这个**,驱动方要按行解析）:");
-  L.push("第一行：一句话结论,不超过 60 字,不要加任何前缀。");
-  L.push("其后：分点说清理由与证据,引用 `文件:行号`。");
+  L.push("Output format (**follow exactly** — the driver parses it line by line):");
+  L.push("Line 1: a one-sentence conclusion, at most 60 characters, no prefix of any kind.");
+  L.push("Then: bullet points with reasoning and evidence, citing `file:line`.");
   L.push("");
-  L.push("⚠ **不要调用任何 loop_* 工具**。这次回环的记账与裁定由驱动方做," +
-    "你只管做好自己这个角色,然后把结论说出来。");
+  L.push("IMPORTANT: **Do not call any loop_* tool.** Accounting and verdicts belong to the driver; " +
+    "play your role, then state your conclusion.");
   return L.join("\n");
 }
 

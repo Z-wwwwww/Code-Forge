@@ -1,14 +1,18 @@
 description = "在一个可验证的目标上跑对抗回环（提方案 ⇄ 找反例 ⇄ 代码判定），过程直播到本地监控台"
 prompt = """
-用 code-forge 技能在这个目标上跑一次对抗回环：{{args}}
+Use the code-forge skill to run an adversarial loop on this goal: {{args}}
 
-上一行冒号后面是空的、或含糊到一句话都不成（「优化一下」）时：**不要自己编一个目标开跑**。
-若这段对话里刚讨论过一个具体问题，把它凝成一句目标向我确认；否则直接问我「要做什么？」。
-目标立住之前不要调 loop_begin，也不要开始扫仓库找判据。
+If the text after the colon above is empty, or too vague to be a goal ("optimize it"):
+**do not invent a goal and start.** If this conversation just discussed a concrete problem,
+distill it into one candidate goal and confirm with me; otherwise just ask me what to do,
+in the language I am speaking. Until the goal is established, do not call loop_begin and do
+not scan the repo for gate candidates.
 
-按技能里的协议走：先确认判据命令（一条现在就能跑、能反映目标的命令；有量的话配上 metric），
-再 loop_begin 开局并把监控台网址告诉我，然后每轮让实现者与反驳者各自做事、各自 loop_say，
-一轮结束调 loop_gate。
+Follow the skill's protocol: settle the gate command first (one runnable now that reflects the
+goal; add a metric if the goal carries a number), then loop_begin (pass lang = my conversation
+language) and tell me the console URL; each round let the proposer and the critic work and
+loop_say for themselves, then loop_gate at the round's end.
 
-记住三条：达标只有 loop_gate 能判；判据不许为了达标而放宽或换掉；停了要如实说是七种原因里的哪一条。
+Remember three things: only loop_gate rules success; the gate must never be loosened or swapped
+to pass; when it stops, state truthfully which of the seven stop reasons it was.
 """

@@ -538,7 +538,7 @@ provider:`mock`(零 key,先跑通)/ `anthropic` / `openai` / `deepseek` / `qwen`
 ## 自测
 
 ```
-node test-host.js    # 122 项：宿主驱动 + 跨宿主适配器 + 逐 agent 用量 + MCP 全链路 + 插件包装
+node test-host.js    # 123 项：宿主驱动 + 跨宿主适配器 + 逐 agent 用量 + MCP 全链路 + 插件包装
 node test.js         # 29 项：本地驱动模式（可选）
 ```
 

@@ -298,7 +298,7 @@ var KIND = {
   audit:  { label:"AUDIT",   color:"#C08CF0" }, route:  { label:"ROUTE",   color:"#8B95A2" }
 };
 var BAR_COLORS = ["#171B21","#63C68E","#E8C468","#3A4450"];
-var BAR_LEGEND = ["未参与本轮判定","被采纳","主导裁决","进行中"];
+var BAR_LEGEND = null;   // 见 L10N.*.barLegend(按 run.lang 取)
 var SEV_COLORS = { HIGH:"#E2707A", MED:"#E8C468", LOW:"#8B95A2", OPEN:"#6FD3C7" };
 var FALLBACK_COLORS = ["#6FD3C7","#E2707A","#E8C468","#7EA8F0","#63C68E","#C08CF0","#E29A6B","#8B95A2"];
 
@@ -307,12 +307,77 @@ var STORE = { run:null, roles:{}, roleOrder:[], rounds:[], byN:{}, streaming:nul
 // 服务端的回环状态(是否真的在跑)。页面自己猜不出来 —— 日志里没有 run.end 既可能是
 // 还在跑,也可能是进程早就没了,这两件事对「停止」按钮该不该出现是相反的。
 var SERVER = { active:false, lastReason:null, checked:false };
-var STOP_REASONS = {
-  goal_met:"达标停止（命令判过）", judged_met:"达标停止（评审判定）", reported_met:"达标停止（角色上报的指标）",
-  interrupted:"中断（上一局没收尾就断了 —— 已补账,不是还在跑）", budget_tokens:"TOKEN 预算耗尽", budget_time:"超出时限",
-  max_rounds:"到达轮数上限", no_progress:"连续零进展", stopped:"手动停止",
-  gate_broken:"判据本身失败", driver_error:"驱动异常"
+/* ★ 双语词典(用户点名:UI 文字跟用户对话的语言)。lang 来自 run.start(loop_begin 按
+ * 对话语言带来);旧档案没有 lang 落回 zh。事件**内容**是档案原文,不翻译 —— 只翻标签。 */
+var L10N = {
+  zh: {
+    stop: {
+      goal_met:"达标停止（命令判过）", judged_met:"达标停止（评审判定）", reported_met:"达标停止（角色上报的指标）",
+      interrupted:"中断（上一局没收尾就断了 —— 已补账,不是还在跑）", budget_tokens:"TOKEN 预算耗尽", budget_time:"超出时限",
+      max_rounds:"到达轮数上限", budget_rounds:"到达轮数上限", no_progress:"连续零进展", stopped:"手动停止",
+      idle_spin:"空跑（没人真的改过东西）", stalled:"停滞（角色进程卡住）", abandoned:"agent 放弃",
+      judge_broken:"评审判据本身失败", gate_broken:"判据本身失败", driver_error:"驱动异常"
+    },
+    barLegend: ["未参与本轮判定","被采纳","主导裁决","进行中"],
+    roundN: function(n){ return "第 " + n + " 轮"; },
+    evConf: function(e,c){ return e + " 事件 · " + c + " 分歧"; },
+    liveEv: function(e){ return "进行中 · " + e + " 事件"; },
+    tabLive: "实时", tabReplay: "复盘",
+    stream: "流 · ", connecting: "连接中", retrying: "重连中", unknownPill: "未知 ",
+    stopBtn: "停止回环", stopping: "正在停止…",
+    waitingStart: "等待 run.start …", replayTag: "回放 REPLAY",
+    tokTotal: "TOKENS 总计", tokNone: "TOKENS 未上报", cost: "成本", advRounds: "对抗轮次",
+    noRoles: "还没有角色", noModels: "还没有模型", noRounds: "还没有轮次", noPatches: "还没有补丁",
+    noConflicts: "本轮还没有记录分歧", noEventsRole: "该角色在本轮没有事件。",
+    silent: "未发言", says: function(n){ return n + " 次发言"; }, noSay: "不发言",
+    notYet: "本回环还没轮到它", noUsageYet: "暂无用量（干完活才有账）",
+    cacheAcc: "缓存重读累计 ",
+    adopted: function(a,r){ return "采纳 " + a + "/" + r + " 轮"; },
+    secRounds: "轮次 ROUNDS", secTok: "TOKEN 消耗排行", secScope: "全会话",
+    legIn: "输入", legOut: "输出", secModels: "模型对比 MODELS",
+    secConf: "本轮分歧点 CONFLICTS", secPatch: "代码演进 PATCH TRAIL",
+    all: "全部", targets: "针对", waitNext: "等待下一个事件…", thisRound: "本轮",
+    verdict: "裁决", pending: "待裁决", collapseAll: "收起全部", expandAll: "展开全部",
+    archive: "■ 档案", lastEvent: " 最后事件 ", firstEvent: " 等第一条事件",
+    justNow: "刚刚", secAgo: function(n){ return n + "s 前"; }, minAgo: function(n){ return n + "m 前"; }
+  },
+  en: {
+    stop: {
+      goal_met:"Stopped: goal met (command)", judged_met:"Stopped: goal met (judge)",
+      reported_met:"Stopped: goal met (role-reported metric)",
+      interrupted:"Interrupted (previous run never wrapped up — reconciled, not still running)",
+      budget_tokens:"Token budget exhausted", budget_time:"Time limit exceeded",
+      max_rounds:"Round limit reached", budget_rounds:"Round limit reached", no_progress:"No progress",
+      stopped:"Stopped manually", idle_spin:"Idle spin (nothing actually changed)",
+      stalled:"Stalled (role process hung)", abandoned:"Agent gave up",
+      judge_broken:"Judge gate itself failed", gate_broken:"Gate itself failed", driver_error:"Driver error"
+    },
+    barLegend: ["not in this round's verdict","adopted","led the verdict","in progress"],
+    roundN: function(n){ return "Round " + n; },
+    evConf: function(e,c){ return e + " events · " + c + " conflicts"; },
+    liveEv: function(e){ return "in progress · " + e + " events"; },
+    tabLive: "live", tabReplay: "replay",
+    stream: "stream · ", connecting: "connecting", retrying: "retrying", unknownPill: "unknown ",
+    stopBtn: "Stop loop", stopping: "stopping…",
+    waitingStart: "waiting for run.start …", replayTag: "REPLAY",
+    tokTotal: "TOKENS TOTAL", tokNone: "TOKENS UNREPORTED", cost: "cost", advRounds: "rounds",
+    noRoles: "no roles yet", noModels: "no models yet", noRounds: "no rounds yet", noPatches: "no patches yet",
+    noConflicts: "no conflicts recorded this round", noEventsRole: "this role has no events this round.",
+    silent: "silent", says: function(n){ return n + " statements"; }, noSay: "never speaks",
+    notYet: "not its turn yet this loop", noUsageYet: "no usage yet (accounts appear after it works)",
+    cacheAcc: "cache re-reads (cumulative) ",
+    adopted: function(a,r){ return "adopted " + a + "/" + r + " rounds"; },
+    secRounds: "ROUNDS", secTok: "TOKEN RANKING", secScope: "whole session",
+    legIn: "input", legOut: "output", secModels: "MODELS",
+    secConf: "CONFLICTS THIS ROUND", secPatch: "PATCH TRAIL",
+    all: "all", targets: "targets", waitNext: "waiting for the next event…", thisRound: "this round",
+    verdict: "verdict", pending: "pending", collapseAll: "collapse all", expandAll: "expand all",
+    archive: "■ archive", lastEvent: " last event ", firstEvent: " waiting for the first event",
+    justNow: "just now", secAgo: function(n){ return n + "s ago"; }, minAgo: function(n){ return n + "m ago"; }
+  }
 };
+function WT(){ var l = STORE.run && STORE.run.lang; return L10N[String(l || "zh").toLowerCase()] || L10N.zh; }
+var STOP_REASONS = L10N.zh.stop;   // 兼容旧引用(下面逐处换成 WT().stop)
 function refreshServer(){
   fetch("/health").then(function(r){ return r.json(); }).then(function(h){
     SERVER.active = !!(h.run && h.run.active);
@@ -335,7 +400,7 @@ function ensureRole(id){
 // 事件先到、round.start 后到也不丢:按需建轮
 function ensureRound(n){
   if (!STORE.byN[n]) {
-    STORE.byN[n] = { n:n, title:"第 " + n + " 轮", meta:"", live:true,
+    STORE.byN[n] = { n:n, title:WT().roundN(n), meta:"", live:true,
       events:[], conflicts:[], patches:[], winner:null, winnerRole:null, score:null };
     STORE.rounds.push(STORE.byN[n]);
     STORE.rounds.sort(function(a,b){ return a.n - b.n; });
@@ -468,7 +533,7 @@ function totals(){
   return roleList().reduce(function(a,r){ a.in += r.inTok; a.out += r.outTok; return a; }, { in:0, out:0 });
 }
 function roundMeta(rd){
-  var counted = rd.events.length + " 事件 · " + rd.conflicts.length + " 分歧";
+  var counted = WT().evConf(rd.events.length, rd.conflicts.length);
   // 结轮之后 meta 是终稿,照发;进行中的轮子数还在变,声明的那份必然过期,只留它的时间段
   if (!rd.live) return rd.meta || counted;
   return rd.meta ? rd.meta + " · " + counted : counted;
@@ -554,34 +619,34 @@ function renderHeader(round, isLive){
   // 与左栏角色卡同一把尺(roleTot):页头 31.2k、角色卡 10.65M 同屏像两本账(实测)
   var totShown = roleList().reduce(function(s, r){ return s + roleTot(r); }, 0);
   var gap = rep ? Math.max(0, (rep.out || 0) - t.out) : 0;
-  var tabs = [{ key:"live", label:"实时" }, { key:"replay", label:"复盘" }].map(function(tb){
+  var tabs = [{ key:"live", label:WT().tabLive }, { key:"replay", label:WT().tabReplay }].map(function(tb){
     return '<button data-act="mode" data-v="' + tb.key + '"' + (state.mode === tb.key ? ' class="on"' : "") + ">" + esc(tb.label) + "</button>";
   }).join("");
   var pulsePill = '<span class="conn" id="pulse" title="这个标志每秒自己转,不靠事件 —— 它停了才是页面真卡了"></span>';
   var connPill = conn.state === "open"
-    ? '<span class="conn ok" title="事件流已连接">流 · ' + STORE.count + "</span>"
-    : '<span class="conn bad" title="事件流未连接,正在重试">流 · ' + (conn.state === "connecting" ? "连接中" : "重连中") + "</span>";
+    ? '<span class="conn ok" title="SSE connected">' + WT().stream + STORE.count + "</span>"
+    : '<span class="conn bad" title="SSE disconnected, retrying">' + WT().stream + (conn.state === "connecting" ? WT().connecting : WT().retrying) + "</span>";
   var unknown = STORE.unknown
-    ? '<span class="conn bad" title="收到认不出的事件类型,已忽略但计数">未知 ' + STORE.unknown + "</span>" : "";
+    ? '<span class="conn bad" title="unrecognized event types (ignored, counted)">' + WT().unknownPill + STORE.unknown + "</span>" : "";
   // 停止原因必须是真的那一条 —— 「烧完停」和「达标停」下一步动作完全不同
   var endPill = STORE.ended
     ? '<span class="pill ' + (STORE.ended.reason === "goal_met" ? "good" : "bad") + '" title="' +
-      esc(STORE.ended.detail || "") + '">' + esc(STOP_REASONS[STORE.ended.reason] || STORE.ended.reason) + "</span>"
+      esc(STORE.ended.detail || "") + '">' + esc(WT().stop[STORE.ended.reason] || STORE.ended.reason) + "</span>"
     : "";
   var stopBtn = SERVER.active
-    ? '<button class="expandall" data-act="stopRun" title="打断在途调用；已花的会记成估算">停止回环</button>'
+    ? '<button class="expandall" data-act="stopRun">' + WT().stopBtn + "</button>"
     : "";   // （执行路线删了:新建回环去 coding agent 里 /code-forge）
   return '<header class="hdr">' +
       '<div class="brand"><span class="nm">ADVERSARIAL·MCP</span><span class="ver">' + esc(run.version || "") + "</span></div>" +
       '<div class="vr"></div>' +
       '<div class="sess">' +
-        '<div class="t">' + (run.session ? "session · " + esc(run.session) : "等待 run.start …") + "</div>" +
+        '<div class="t">' + (run.session ? "session · " + esc(run.session) : WT().waitingStart) + "</div>" +
         '<div class="s">' + esc([run.repo, run.branch ? "branch " + run.branch : "", run.client ? "client: " + run.client : ""].filter(Boolean).join(" · ")) + "</div>" +
       "</div>" +
       '<div class="grow"></div>' + endPill + stopBtn + pulsePill + connPill + unknown +
       '<div class="status" style="border-color:' + (isLive ? ACC + "4D" : "#232830") + ";background:" + (isLive ? ACC + "14" : "#14181D") + '">' +
         '<span class="status-dot" style="background:' + dotC + ";" + (isLive ? "animation:livePulse 1.6s ease-in-out infinite" : "") + '"></span>' +
-        '<span class="lb" style="color:' + dotC + '">' + (isLive ? "LIVE" : "回放 REPLAY") + "</span>" +
+        '<span class="lb" style="color:' + dotC + '">' + (isLive ? "LIVE" : WT().replayTag) + "</span>" +
       "</div>" +
       '<div class="tabs">' + tabs + "</div>" +
       '<div class="kpis">' +
@@ -591,13 +656,13 @@ function renderHeader(round, isLive){
                      "所以各角色的 out 是下界" : "")
              : "还没有任何角色报出用量：角色可能还没真的干活，或这个宿主没有可读的子 agent 档案") + '">' +
           '<span class="v">' + (totShown ? k1(totShown) : "—") + '</span>' +
-          '<span class="k">' + (totShown ? "TOKENS 总计" : "TOKENS 未上报") + "</span></div>" +
+          '<span class="k">' + (totShown ? WT().tokTotal : WT().tokNone) + "</span></div>" +
         // 成本只显示 agent 自己报的那个数。查价目表乘一遍算出来的是编的,不写。
         (cost != null
           ? '<div class="kpi" title="claude -p 收尾时自己报的 total_cost_usd"><span class="v">$' +
-            cost.toFixed(2) + '</span><span class="k">成本</span></div>'
+            cost.toFixed(2) + '</span><span class="k">' + WT().cost + "</span></div>"
           : "") +
-        '<div class="kpi"><span class="v">' + STORE.rounds.length + '</span><span class="k">对抗轮次</span></div>' +
+        '<div class="kpi"><span class="v">' + STORE.rounds.length + '</span><span class="k">' + WT().advRounds + "</span></div>" +
       "</div>" +
     "</header>";
 }
@@ -607,8 +672,8 @@ function renderRoundList(){
   var cur = curRound();
   return STORE.rounds.map(function(r){
     var on = cur && r.n === cur.n;
-    var meta = r.live ? "进行中 · " + r.events.length + " 事件"
-                      : r.events.length + " 事件 · " + r.conflicts.length + " 分歧";
+    var meta = r.live ? WT().liveEv(r.events.length)
+                      : WT().evConf(r.events.length, r.conflicts.length);
     return '<button class="ritem' + (on ? " on" : "") + '" data-act="round" data-v="' + esc(r.n) + '">' +
       '<span class="n">R' + esc(r.n) + "</span>" +
       '<span class="mid"><span class="ti">' + esc(r.title) + '</span><span class="me">' + esc(meta) + "</span></span>" +
@@ -618,7 +683,7 @@ function renderRoundList(){
 }
 function renderRanking(){
   var rs = roleList();
-  if (!rs.length) return '<div class="empty-min">还没有角色</div>';
+  if (!rs.length) return '<div class="empty-min">' + WT().noRoles + "</div>";
   /* ★ 排行、条长、头号数字用 **Claude Code 同口径**:该角色各 agent **末次上下文**之和。
    *   两个方向都实测踩过:只显示 in+out(8k)被当成漏账;显示历次缓存读累计(14M)
    *   又被当成账炸了(「预计只有 1000k 上下」)—— Claude Code 给每个 agent 显示的
@@ -646,12 +711,12 @@ function renderRanking(){
       .sort(function(a,b){ return b[1] - a[1]; }).slice(0, 3)
       .map(function(p){ return p[0] + "×" + p[1]; }).join(" ");
     return '<button data-act="rank" data-v="' + esc(r.id) + '" style="opacity:' + op + '" title="' +
-        esc(r.duty || r.name) + (unknown ? " · 这个角色还没有可读的账（干完活才有）" : "") + '">' +
+        esc(r.duty || r.name) + '">' +
       '<span class="top">' +
         '<span class="sw" style="background:' + r.color + '"></span>' +
         '<span class="nm">' + esc(r.name) + "</span>" +
         '<span class="grow"></span>' +
-        '<span class="tot">' + (silent ? "未发言" : unknown ? r.calls + " 次发言" : k1(total)) + "</span>" +
+        '<span class="tot">' + (silent ? WT().silent : unknown ? WT().says(r.calls) : k1(total)) + "</span>" +
       "</span>" +
       (unknown || silent ? "" :
         '<span class="bar">' +
@@ -659,13 +724,13 @@ function renderRanking(){
           '<u style="left:' + inPct.toFixed(1) + "%;width:" + outPct.toFixed(1) + "%;background:" + r.color + '"></u>' +
         "</span>") +
       '<span class="foot">' +
-        (silent ? '<span>本回环还没轮到它</span>'
-          : unknown ? '<span>暂无用量（干完活才有账）</span>'
+        (silent ? "<span>" + WT().notYet + "</span>"
+          : unknown ? "<span>" + WT().noUsageYet + "</span>"
           : "<span>in " + k1(r.inTok) + "</span><span>out " + k1(r.outTok) + "</span>" +
             ((r.cacheRead || r.cacheWrite)
-              ? "<span>缓存重读累计 " + k1((r.cacheRead || 0) + (r.cacheWrite || 0)) + "</span>" : "")) +
+              ? "<span>" + WT().cacheAcc + k1((r.cacheRead || 0) + (r.cacheWrite || 0)) + "</span>" : "")) +
         "<span>" + esc(r.model) + "</span>" +
-        (unknown || silent ? "" : "<span>" + (r.calls ? r.calls + " 次发言" : "不发言") + "</span>") +
+        (unknown || silent ? "" : "<span>" + (r.calls ? WT().says(r.calls) : WT().noSay) + "</span>") +
         (toolTxt ? "<span>" + esc(toolTxt) + "</span>" : "") +
       "</span>" +
     "</button>";
@@ -673,14 +738,14 @@ function renderRanking(){
 }
 function renderModels(){
   var ms = modelStats();
-  if (!ms.length) return '<div class="empty-min">还没有模型</div>';
+  if (!ms.length) return '<div class="empty-min">' + WT().noModels + "</div>";
   return ms.map(function(m){
     var bars = m.bars.map(function(v,i){
-      return '<i style="background:' + (BAR_COLORS[v] || BAR_COLORS[0]) + '" title="R' + (i + 1) + " · " + esc(BAR_LEGEND[v]) + '"></i>';
+      return '<i style="background:' + (BAR_COLORS[v] || BAR_COLORS[0]) + '" title="R' + (i + 1) + " · " + esc(WT().barLegend[v]) + '"></i>';
     }).join("") || '<i style="background:' + BAR_COLORS[0] + '"></i>';
     return '<div class="mcard">' +
       '<div class="top"><span class="nm">' + esc(m.name) + '</span><span class="grow"></span>' +
-        '<span class="ad" style="color:' + (m.adopted > 0 ? "#63C68E" : "#4E5764") + '">采纳 ' + m.adopted + "/" + m.rounds + " 轮</span></div>" +
+        '<span class="ad" style="color:' + (m.adopted > 0 ? "#63C68E" : "#4E5764") + '">' + WT().adopted(m.adopted, m.rounds) + "</span></div>" +
       '<div class="bars">' + bars + "</div>" +
       '<div class="foot"><span>' + k1(m.tokens) + " tok</span><span>" + esc(m.roles) + "</span></div>" +
     "</div>";
@@ -688,16 +753,16 @@ function renderModels(){
 }
 function renderLeft(){
   return '<aside class="pane l" id="pane-l">' +
-      '<div class="blk-rounds"><span class="seclab">轮次 ROUNDS</span><div class="rlist">' +
-        (STORE.rounds.length ? renderRoundList() : '<div class="empty-min">还没有轮次</div>') + "</div></div>" +
+      '<div class="blk-rounds"><span class="seclab">' + WT().secRounds + '</span><div class="rlist">' +
+        (STORE.rounds.length ? renderRoundList() : '<div class="empty-min">' + WT().noRounds + "</div>") + "</div></div>" +
       '<div class="hr" style="margin:6px 0"></div>' +
       '<div class="blk-rank">' +
-        '<div class="blk-head"><span class="seclab">TOKEN 消耗排行</span><span class="scope">全会话</span></div>' +
+        '<div class="blk-head"><span class="seclab">' + WT().secTok + '</span><span class="scope">' + WT().secScope + "</span></div>" +
         '<div class="rank">' + renderRanking() + "</div>" +
-        '<div class="legend"><span><i style="opacity:.38"></i>输入</span><span><i></i>输出</span></div>' +
+        '<div class="legend"><span><i style="opacity:.38"></i>' + WT().legIn + "</span><span><i></i>" + WT().legOut + "</span></div>" +
       "</div>" +
       '<div class="hr" style="margin:2px 0 0"></div>' +
-      '<div class="blk-models"><span class="seclab">模型对比 MODELS</span><div class="mlist">' + renderModels() + "</div></div>" +
+      '<div class="blk-models"><span class="seclab">' + WT().secModels + '</span><div class="mlist">' + renderModels() + "</div></div>" +
     "</aside>";
 }
 
@@ -705,7 +770,7 @@ function renderLeft(){
 function renderChips(round){
   var counts = {};
   round.events.forEach(function(e){ counts[e.role] = (counts[e.role] || 0) + 1; });
-  var list = [{ id:null, name:"全部", color:"#8B95A2", count:round.events.length }].concat(
+  var list = [{ id:null, name:WT().all, color:"#8B95A2", count:round.events.length }].concat(
     roleList().filter(function(r){ return counts[r.id]; }).map(function(r){
       return { id:r.id, name:r.name, color:r.color, count:counts[r.id] };
     })
@@ -748,7 +813,7 @@ function renderDiff(df){
 }
 function renderEvents(round){
   var shown = round.events.filter(function(e){ return !state.roleFilter || e.role === state.roleFilter; });
-  if (!shown.length) return '<div class="empty-min" style="padding:14px 0">该角色在本轮没有事件。</div>';
+  if (!shown.length) return '<div class="empty-min" style="padding:14px 0">' + WT().noEventsRole + "</div>";
   return shown.map(function(e){
     var r = roleOf(e.role);
     var key = round.n + "-" + round.events.indexOf(e);
@@ -758,7 +823,7 @@ function renderEvents(round){
     if (open) {
       var parts = ['<div class="hr"></div>'];
       if (e.targets && e.targets.length) {
-        parts.push('<div class="targets"><span class="k">针对</span>' +
+        parts.push('<div class="targets"><span class="k">' + WT().targets + "</span>" +
           e.targets.map(function(t){
             var tr = roleOf(t);
             return '<span class="t" style="color:' + tr.color + ";border-color:" + tr.color + '4D">' + esc(tr.name) + "</span>";
@@ -790,8 +855,8 @@ function renderMain(round, isLive){
   var wc = winColorOf(round);
   var vb = round.live ? "#232830" : wc + "40";
   var vbg = round.live ? "#14181D" : wc + "12";
-  var say = STORE.streaming && STORE.streaming.text ? STORE.streaming.text : "等待下一个事件…";
-  var who = STORE.streaming && STORE.streaming.role ? roleOf(STORE.streaming.role).name : "本轮";
+  var say = STORE.streaming && STORE.streaming.text ? STORE.streaming.text : WT().waitNext;
+  var who = STORE.streaming && STORE.streaming.role ? roleOf(STORE.streaming.role).name : WT().thisRound;
   var stream = isLive ? (
     '<div class="stream">' + "<div></div>" +
       '<div class="rail"><span class="live-dot"></span></div>' +
@@ -806,15 +871,15 @@ function renderMain(round, isLive){
             '<div class="me">' + esc(roundMeta(round)) + "</div></div>" +
           '<div class="grow"></div>' +
           '<div class="verdict" style="border-color:' + vb + ";background:" + vbg + '">' +
-            '<span class="k">裁决</span>' +
+            '<span class="k">' + WT().verdict + "</span>" +
             '<span class="d" style="background:' + wc + '"></span>' +
-            '<span class="w" style="color:' + wc + '">' + esc(round.live ? "待裁决" : round.winner) + "</span>" +
+            '<span class="w" style="color:' + wc + '">' + esc(round.live ? WT().pending : round.winner) + "</span>" +
             '<span class="sc">' + esc(round.live ? "—" : round.score) + "</span>" +
           "</div>" +
         "</div>" +
         '<div class="chips">' + renderChips(round) +
           '<span class="grow"></span>' +
-          '<button class="expandall" data-act="expandAll">' + (state.expandAll ? "收起全部" : "展开全部") + "</button>" +
+          '<button class="expandall" data-act="expandAll">' + (state.expandAll ? WT().collapseAll : WT().expandAll) + "</button>" +
         "</div>" +
       "</div>" +
       '<div class="tl"><div class="rows">' + renderEvents(round) + "</div>" + stream + "</div>" +
@@ -823,7 +888,7 @@ function renderMain(round, isLive){
 
 /* ---------------- 右栏 ---------------- */
 function renderConflicts(round){
-  if (!round.conflicts.length) return '<div class="empty-min">本轮还没有记录分歧</div>';
+  if (!round.conflicts.length) return '<div class="empty-min">' + WT().noConflicts + "</div>";
   return round.conflicts.map(function(c){
     var a = roleOf(c.a), b = roleOf(c.b);
     var sev = SEV_COLORS[c.sev] || "#8B95A2";
@@ -844,7 +909,7 @@ function renderConflicts(round){
 function renderPatches(){
   var all = [];
   STORE.rounds.forEach(function(rd){ rd.patches.forEach(function(p){ all.push(p); }); });
-  if (!all.length) return '<div class="empty-min">还没有补丁</div>';
+  if (!all.length) return '<div class="empty-min">' + WT().noPatches + "</div>";
   var sum = all.reduce(function(a,p){ a.add += Number(p.add) || 0; a.del += Number(p.del) || 0; return a; }, { add:0, del:0 });
   var cur = curRound();
   var rows = all.map(function(p){
@@ -870,11 +935,11 @@ function renderRight(round){
   var patches = renderPatches();
   var m = patches.match(/data-total="([^"]*)"/);
   return '<aside class="pane r" id="pane-r">' +
-      '<div class="blk-conf"><span class="seclab">本轮分歧点 CONFLICTS</span>' +
+      '<div class="blk-conf"><span class="seclab">' + WT().secConf + "</span>" +
         '<div class="clist">' + renderConflicts(round) + "</div></div>" +
       '<div class="hr"></div>' +
       '<div class="blk-patch">' +
-        '<div class="blk-head"><span class="seclab">代码演进 PATCH TRAIL</span>' +
+        '<div class="blk-head"><span class="seclab">' + WT().secPatch + "</span>" +
           '<span class="scope">' + (m ? esc(m[1]) : "") + "</span></div>" +
         '<div class="ptrail">' + patches + "</div>" +
       "</div>" +
@@ -955,7 +1020,7 @@ app.addEventListener("click", function(ev){
     case "expandAll": state.expandAll = !state.expandAll; break;
     case "stopRun":
       btn.disabled = true;
-      btn.textContent = "正在停止…";
+      btn.textContent = WT().stopping;
       fetch("/runs/stop", { method: "POST" })
         .then(function(r){ return r.json(); })
         .then(function(){ refreshServer(); })
@@ -975,10 +1040,10 @@ var SPINF = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"], spinI
 setInterval(function(){
   var el = document.getElementById("pulse");
   if (!el) return;
-  if (STORE.ended) { el.textContent = "■ 档案"; el.className = "conn"; return; }
+  if (STORE.ended) { el.textContent = WT().archive; el.className = "conn"; return; }
   var ago = STORE.lastEventAt ? Math.round((Date.now() - STORE.lastEventAt) / 1000) : null;
-  var agoTxt = ago == null ? "" : ago < 3 ? "刚刚" : ago < 90 ? ago + "s 前" : Math.round(ago / 60) + "m 前";
-  el.textContent = SPINF[(spinI++) % SPINF.length] + (agoTxt ? " 最后事件 " + agoTxt : " 等第一条事件");
+  var agoTxt = ago == null ? "" : ago < 3 ? WT().justNow : ago < 90 ? WT().secAgo(ago) : WT().minAgo(Math.round(ago / 60));
+  el.textContent = SPINF[(spinI++) % SPINF.length] + (agoTxt ? WT().lastEvent + agoTxt : WT().firstEvent);
   el.className = "conn pulse " + (ago != null && ago > 300 ? "bad" : "ok");
 }, 120);
 

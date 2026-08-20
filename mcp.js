@@ -96,71 +96,79 @@ const TOOLS = [
   {
     name: "loop_begin",
     description:
-      "开一局对抗回环。**流程由这里的状态机编排,你只当手**:每次回复只给当前这一步的指令和" +
-      "一次性 token,照做后带 token 重调;乱序/跳步会被弹回当前步。步骤:目标 → 配置卡 → 确认卡 → 开局。" +
-      "第一次调可以只带 task(用户已给目标时),或什么都不带。",
+      "Start an adversarial loop. **The pre-start flow is orchestrated by a server-side state machine; " +
+      "you are only the hands**: each reply gives you the instruction for the CURRENT step plus a one-time " +
+      "token; follow it and call again with the token. Out-of-order or skipped steps bounce back to the " +
+      "current step. Steps: goal -> config card -> confirm card -> start. " +
+      "The first call may carry just task (if the user already stated the goal), or nothing.",
     inputSchema: {
       type: "object",
       properties: {
-        session: { type: "string", description: "这次回环叫什么(会显示在页头)" },
+        session: { type: "string", description: "Display name of this loop (shown in the page header)" },
         repo: { type: "string" }, branch: { type: "string" },
+        lang: {
+          type: "string",
+          description: "UI language for the observers (\"zh\"/\"en\"...): the language you are speaking " +
+            "with the user. Omit to auto-detect from the task text."
+        },
         goal: {
           type: "object",
           properties: {
-            command: { type: "string", description: "判据命令,如 pytest -q 或 npm test" },
-            cwd: { type: "string", description: "在哪个目录跑,默认监控台进程的目录" },
+            command: { type: "string", description: "Gate command, e.g. pytest -q or npm test" },
+            cwd: { type: "string", description: "Directory to run it in; defaults to the console's cwd" },
             metric: {
               type: "object",
-              description: "可选。从命令输出里抓一个数,比区间。",
+              description: "Optional. Capture one number from the command output and compare against a range.",
               properties: {
                 name: { type: "string" },
-                pattern: { type: "string", description: "正则,第一个捕获组当数字,如 coverage: ([0-9]+)（source:say 时不用）" },
+                pattern: { type: "string", description: "Regex; first capture group is the number, " +
+                  "e.g. coverage: ([0-9]+). Not used with source:\"say\"." },
                 source: { type: "string", enum: ["say"],
-                  description: "值从哪来。say = 反驳者/复核者每轮 loop_say 带 value 上报（判据是停止条件,不必是可执行命令;停止原因单列 reported_met,可信度低于命令）" },
-                source: { type: "string", enum: ["say"],
-                  description: "值从哪来。\"say\" = 反驳者/复核者每轮 loop_say 带 value 上报" +
-                    "（判据是停止条件,不必是可执行命令;停止原因会单列「角色上报」,可信度低于命令）" },
+                  description: "Where the value comes from. \"say\" = the critic/reviewer reports value via " +
+                    "loop_say each round (the gate is a stop CONDITION, not necessarily a runnable command; " +
+                    "the stop reason is reported separately as reported_met, lower trust than a command)." },
                 min: { type: "number" }, max: { type: "number" }
               }
             },
-            // metric.source==="say":判据是**停止条件**,不必是可执行命令。
-            // 值由反驳者/复核者每轮 loop_say 带 value 上报(实现者报的不算,它有动机报 0)。
-            // 例:「修 bug 直到连续 3 轮挖不出新 bug」= metric:{name:"新bug数",source:"say",max:0} + streak:3
-            // metric.source==="say":判据是**停止条件**,不必是可执行命令。
-            // 值由反驳者/复核者每轮 loop_say 带 value 上报(实现者报的不算,它有动机报 0)。
-            // 例:「修 bug 直到连续 3 轮挖不出新 bug」= metric:{name:"新bug数",source:"say",max:0} + streak:3
+            // metric.source==="say": e.g. "fix bugs until 3 consecutive clean rounds" =
+            //   metric:{name:"new bugs",source:"say",max:0} + streak:3. Only critic/reviewer reports count -
+            //   the proposer has every incentive to report 0.
             streak: {
               type: "number",
-              description: "可选。要求**连续 N 轮**判过才算达标(断一次从头攒)。" +
-                "对应「修 bug 直到连续 3 轮挖不出新 bug」这类判据;期间判过的轮不计零进展。"
+              description: "Optional. Require **N consecutive passing rounds** to count as met " +
+                "(a miss resets the streak). Passing rounds during the streak are not counted as no-progress."
             }
           }
         },
         budget: {
           type: "object",
-          description: "硬闸。到顶时 loop_gate 会回 continue:false,你必须停手。",
+          description: "Hard limits. When exhausted, loop_gate returns continue:false and you must stop.",
           properties: {
-            rounds: { type: "number", description: "最多几轮(默认 8)。0 = **不限轮数** —— 时限与零进展闸门仍然生效" },
-            tokens: { type: "number", description: "token 预算,0/不填 = **不限(首选)**。只计量得到的部分" +
-              "(Claude Code 子 agent 档案 + loop_agent 派的角色/评审者报的账;协调者本人摊不出来)—— 这是个下界闸" },
-            seconds: { type: "number", description: "最长多少秒(默认 3600)" },
-            noProgressRounds: { type: "number", description: "指标连续几轮不进步就停(默认 2)" }
+            rounds: { type: "number", description: "Max rounds (default 8). 0 = **unlimited rounds** - " +
+              "the time limit and no-progress gates still apply" },
+            tokens: { type: "number", description: "Token budget; 0/omitted = **unlimited (preferred)**. " +
+              "Counts only what is measurable (Claude Code subagent archives + loop_agent roles/judges; " +
+              "the coordinator itself cannot be attributed) - a lower-bound gate" },
+            seconds: { type: "number", description: "Max seconds (default 3600); 0 = unlimited" },
+            noProgressRounds: { type: "number", description: "Stop after this many consecutive rounds " +
+              "without metric progress (default 2)" }
           }
         },
-        token: { type: "string", description: "上一条回复发的一次性步骤码。每步都换;丢了就不带,从头走。" },
-        task: { type: "string", description: "目标(第 1 步交,或首调顺路带)" },
-        go: { type: "boolean", description: "第 3 步:用户在确认卡选了「开跑」" },
-        revise: { type: "boolean", description: "第 3 步:用户选了「再改一项」,回到配置卡" },
+        token: { type: "string", description: "One-time step token from the previous reply. Changes every " +
+          "step; if lost, call without it to restart." },
+        task: { type: "string", description: "The goal (submitted at step 1, or with the first call)" },
+        go: { type: "boolean", description: "Step 3: the user chose Start on the confirm card" },
+        revise: { type: "boolean", description: "Step 3: the user chose Change-one-thing; returns to the config card" },
         roles: {
           type: "array",
-          description: "按发言顺序排。至少两个(一个提议、一个反驳)才叫对抗。",
+          description: "In speaking order. At least two (one proposing, one attacking) or it is not adversarial.",
           items: {
             type: "object",
             properties: {
-              name: { type: "string", description: "角色名,如 实现者 / 反驳者 / 安全审查" },
-              duty: { type: "string", description: "它这一档负责什么" },
+              name: { type: "string", description: "Role name shown in the UI, in the user's language" },
+              duty: { type: "string", description: "What this role is responsible for" },
               kind: { type: "string", enum: ["propose", "attack", "defend", "verdict", "patch", "test", "audit", "route"],
-                description: "档位,决定页面上的配色与标签" }
+                description: "Tier; controls colors/labels in the UI" }
             },
             required: ["name"]
           }
@@ -172,25 +180,24 @@ const TOOLS = [
   {
     name: "loop_say",
     description:
-      "记录某个角色这一轮说了什么(提议 / 反驳 / 补丁 / 审查结论)。每个角色每轮发言后都调一次," +
-      "页面会实时出现。summary 写一句话结论,body 写完整理由。\n" +
-      "可选带 tool(这一步用了什么工具及结果)与 diff(改了哪个文件、加删几行、逐行内容)。\n" +
-      "token 不要编。Claude Code 里子 agent 的账**我们自己从它的档案里读**(模型也是真的);" +
-      "别的宿主报不出就留空,页面会如实标。",
+      "Record what a role said this round (proposal / rebuttal / patch / audit verdict). Call once after " +
+      "each role speaks; it appears live on the page. summary = one-sentence conclusion, body = full reasoning.\n" +
+      "Optionally attach tool (what tool was used and its result) and diff (file, +/- counts, line contents).\n" +
+      "Never fabricate token usage. In Claude Code we read each subagent's own archive (real model, real usage); " +
+      "on other hosts leave it out and the page will honestly show it as unavailable.",
     inputSchema: {
       type: "object",
       properties: {
-        role: { type: "string", description: "角色 id 或名字,必须是 loop_begin 里登记过的" },
+        role: { type: "string", description: "Role id or name; must be registered in loop_begin" },
         value: { type: "number",
-          description: "本轮量出来的数(如挖到的 bug 数)。判据是 metric.source:say 时必带 —— 只有反驳者/复核者报的算数,实现者报的会被忽略(它有动机报 0)" },
-        value: { type: "number",
-          description: "本轮量出来的数(如挖到的 bug 数)。判据是 metric.source:\"say\" 时必带 ——" +
-            "只有反驳者/复核者报的算数,实现者报的会被忽略(它有动机报 0)" },
-        summary: { type: "string", description: "一句话结论(页面折叠行显示这句)" },
-        body: { type: "string", description: "完整理由/内容" },
+          description: "The number measured this round (e.g. bugs found). Required when the gate is " +
+            "metric.source:\"say\" - only critic/reviewer reports count; proposer reports are ignored " +
+            "(it has every incentive to report 0)" },
+        summary: { type: "string", description: "One-sentence conclusion (shown on the collapsed row)" },
+        body: { type: "string", description: "Full reasoning/content" },
         kind: { type: "string", enum: ["propose", "attack", "defend", "verdict", "patch", "test", "audit", "route"] },
-        targets: { type: "array", items: { type: "string" }, description: "这次是针对哪些角色的" },
-        dur: { type: "string", description: "耗时,如 12.7s" },
+        targets: { type: "array", items: { type: "string" }, description: "Which roles this addresses" },
+        dur: { type: "string", description: "Elapsed, e.g. 12.7s" },
         tool: {
           type: "object",
           properties: { name: { type: "string" }, args: { type: "string" },
@@ -200,7 +207,7 @@ const TOOLS = [
           type: "object",
           properties: {
             file: { type: "string" }, add: { type: "number" }, del: { type: "number" },
-            lines: { type: "array", description: "每行 { sign:'+'|'-'|'', text, ln }", items: { type: "object" } }
+            lines: { type: "array", description: "Each line: { sign:'+'|'-'|'', text, ln }", items: { type: "object" } }
           }
         }
       },
@@ -210,53 +217,59 @@ const TOOLS = [
   {
     name: "loop_gate",
     description:
-      "跑判据,并告诉你还能不能继续。**这是唯一能判「达标」的地方 —— 你不得自行宣布达成。**\n" +
-      "每轮所有角色发言完毕后调一次。返回 met(达标了吗)、value(抓到的指标值)、output(命令输出尾部)、" +
-      "continue(还能不能继续)与 stopReason。continue:false 就必须停手并 loop_end。\n" +
-      "未达标时把 output 里的失败信息带回给各角色,再开下一轮。",
+      "Run the gate and learn whether you may continue. **This is the only place that can rule the goal met - " +
+      "you must not declare success yourself.**\n" +
+      "Call once after all roles have spoken in a round. Returns met, value (captured metric), " +
+      "output (command output tail), continue, and stopReason. continue:false means stop and loop_end.\n" +
+      "When not met, carry the failure output back to the roles and start the next round.",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "loop_status",
     description:
-      "读回当前回环的状态:第几轮、还剩几轮、还剩多少秒、判据是否已经判过达标、" +
-      "连续无进展了几轮、当前角色表、以及(若已结束)停止原因。\n" +
-      "什么时候调:不确定还能不能再来一轮、被打断后要接着干、或要向用户汇报进度时。" +
-      "不要凭记忆估剩余预算 —— 这里的数才是准的。",
+      "Read the current loop state: round number, rounds/seconds remaining, whether the gate has ever passed, " +
+      "consecutive no-progress rounds, the role table, and (if ended) the stop reason.\n" +
+      "When to call: unsure whether another round is allowed, resuming after an interruption, or reporting " +
+      "progress to the user. Never estimate remaining budget from memory - these numbers are authoritative.",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "loop_agent",
     description:
-      "把一个角色派到**独立进程**里跑并等它做完 —— 给聊天里没有子 agent 的宿主(Codex 等)用,\n" +
-      "让角色获得真隔离:独立会话、可指定模型、反驳者/复核者在工具层就是只读。\n" +
-      "Claude Code 里**别用这个**,用你自己的 Task 子 agent(forge-proposer / forge-critic / forge-reviewer)。\n" +
-      "role 必须是 loop_begin 登记过的名字。prompt 要自带全部上下文(目标、这一轮别人说了什么、\n" +
-      "判据上次的失败输出) —— 独立进程看不见你的对话。\n" +
-      "结果会**自动 loop_say**,不必再报;返回的 text 用来决定下一步。可能要跑几分钟。",
+      "Run a role in a **standalone process** and wait for it - for hosts without subagents in chat (Codex etc.), " +
+      "giving the role true isolation: its own session, chooseable model, and critics/reviewers read-only at the " +
+      "tool layer.\n" +
+      "In Claude Code, **do not use this** - use your own Task subagents " +
+      "(forge-proposer / forge-critic / forge-reviewer).\n" +
+      "role must be a name registered in loop_begin. prompt must be self-contained (goal, what others said this " +
+      "round, last gate failure output) - the standalone process cannot see your conversation.\n" +
+      "The result is **auto-loop_say-ed**; do not report it again. Use the returned text to decide the next step. " +
+      "May run for minutes.",
     inputSchema: {
       type: "object",
       required: ["role", "prompt"],
       properties: {
-        role: { type: "string", description: "loop_begin 登记过的角色名或 id" },
-        prompt: { type: "string", description: "给这个角色的完整任务书(它看不见你的对话)" },
-        model: { type: "string", description: "可选:这个角色用什么模型(不给就用宿主默认)" },
-        agent: { type: "string", description: "可选:用哪个 CLI 当这个角色的宿主(claude/codex/…)" },
-        timeoutMs: { type: "number", description: "可选:无输出多久算卡住,默认 240000" }
+        role: { type: "string", description: "Role name or id registered in loop_begin" },
+        prompt: { type: "string", description: "Complete brief for this role (it cannot see your conversation)" },
+        model: { type: "string", description: "Optional: model for this role (host default if omitted)" },
+        agent: { type: "string", description: "Optional: which CLI hosts this role (claude/codex/...)" },
+        timeoutMs: { type: "number", description: "Optional: silence duration counted as stalled, default 240000" }
       }
     }
   },
   {
     name: "loop_end",
     description:
-      "收工。reason 取 stopped(人喊停)/ abandoned(你判断做不下去,detail 里说清为什么)。\n" +
-      "⚠ reason=goal_met 只有在 loop_gate 真的判过达标之后才会被接受 —— 否则会被拒绝。" +
-      "通常你不需要手动调它:loop_gate 判出达标或预算到顶时会自动收工。",
+      "Wrap up. reason is stopped (a human called it off) or abandoned (you judge it unworkable; say why in " +
+      "detail).\n" +
+      "NOTE: reason=goal_met is only accepted after loop_gate has actually ruled the goal met - otherwise it is " +
+      "rejected. You normally never call this yourself: the loop auto-ends when the gate rules met or the budget " +
+      "runs out.",
     inputSchema: {
       type: "object",
       properties: {
         reason: { type: "string", enum: ["stopped", "abandoned", "goal_met"] },
-        detail: { type: "string", description: "一句话说明,会写进档案" }
+        detail: { type: "string", description: "One-sentence explanation, written into the archive" }
       }
     }
   }
@@ -437,43 +450,58 @@ function createHandler(state) {
           for (const ch of String(t || "").replace(/\s+/g, "")) w += ch.charCodeAt(0) > 0x2e7f ? 2 : 1;
           return w >= 4;
         };
+        /* ★ UI 语言跟随用户(用户点名:提示词全英文,UI 文字按对话语言)。
+         *   目标文本里有 CJK 就当 zh,否则 en;协调者也可显式传 lang 覆盖。
+         *   lang 随 cfg 进 /host/begin → run.start 事件 → TUI/网页按它取词典。 */
+        const langOf = (t) => /[぀-ヿ一-鿿]/.test(String(t || "")) ? "zh" : "en";
 
         // 没带 token / token 不对 → 从头(或回到当前步:把当前步指令原样再发一遍)
         if (!state.setup || !args.token || args.token !== state.setup.token) {
           // 首调可以顺路带 task(用户在 /code-forge 后面写了目标) —— 顺序不变,只是省一回合
           if (!state.setup || !args.token) {
             if (taskOk(args.task)) {
-              state.setup = { stage: "config", token: tok(), task: String(args.task).trim() };
+              state.setup = { stage: "config", token: tok(), task: String(args.task).trim(),
+                lang: args.lang || langOf(args.task) };
               return reply(id, configInstruction(state.setup), true);
             }
             state.setup = { stage: "task", token: tok() };
             return reply(id, {
-              步骤: "1/3 目标",
-              指令: "这一回合只做一件事:等用户输入目标(对话里刚讨论过具体问题就用 AskUserQuestion 摆 1~2 条候选;否则一行「目标：要做什么？」然后停)。禁止扫仓库/配置/开局。",
-              然后: "带 { token, task } 重调 loop_begin。",
+              step: "1/3 goal",
+              instruction: "This turn, do exactly one thing: wait for the user to state the goal. " +
+                "If the conversation just discussed a concrete problem, use AskUserQuestion with 1-2 candidate goals; " +
+                "otherwise output a single line asking what to do (in the user's language), then stop. " +
+                "Scanning the repo, configuring, or starting the loop is forbidden until the goal is set.",
+              then: "Call loop_begin again with { token, task }.",
               token: state.setup.token
             }, true);
           }
-          return reply(id, { error: "token 不对(每一步都换)。当前停在第 " +
-            ({ task: "1/3 目标", config: "2/3 配置", confirm: "3/3 确认" })[state.setup.stage] +
-            " 步,用上一条回复里的 token。丢了就不带 token 重调,从头走。" }, true);
+          return reply(id, { error: "Wrong token (it changes every step). You are currently at step " +
+            ({ task: "1/3 goal", config: "2/3 config", confirm: "3/3 confirm" })[state.setup.stage] +
+            "; use the token from the previous reply. If you lost it, call again without a token to restart." }, true);
         }
 
         function configInstruction(st) {
-          const wantStreak = /连续\s*\d+\s*轮|直到.*(为\s*0|清零|挖不出|干净)/.test(st.task);
+          const wantStreak =
+            /连续\s*\d+\s*轮|直到.*(为\s*0|清零|挖不出|干净)|\bconsecutive\b|\buntil\b.*\b(clean|zero|none|no new)\b/i
+              .test(st.task);
           return {
-            步骤: "2/3 配置",
-            目标已立: st.task,
-            指令: "出配置卡(AskUserQuestion,每题推荐排第一,用户一路回车=全默认)。题目按下面出,不许增删改序:",
-            题1_判据: "带着目标看一眼仓库给 2~4 条候选命令(只提议真实存在的;与目标相关的排前面)。" +
-              "没有命令能判的量给 metric.source:\"say\"(角色上报,如「挖到的 bug 数」);完全不可量化才用 rubric。",
-            题2_模型: "推荐分配 (Recommended,写明 实现者X·反驳者Y·复核者Z) / 全用最强 / 全用最省 / 逐角色挑(选它再出一卡)",
-            题3_轮数: "8 (Recommended) / 不限(rounds:0) / 3(快速) —— Other 自填",
-            题5_token预算: "不限 (Recommended) / 500k / 200k —— Other 自填。" +
-              "只计量得到的部分(Claude Code 子 agent 的账我们读得到;协调者本人摊不出来)",
-            题4_时限: "3600s (Recommended) / 7200s" +
-              (wantStreak ? "。目标里有「连续 N 轮」——**必须**再出 streak 一题(推荐=目标里的 N)" : ""),
-            然后: "带 { token, goal, budget, roles } 重调 loop_begin(roles 至少两个;kind 用 propose/attack/audit)。",
+            step: "2/3 config",
+            goal_set: st.task,
+            instruction: "Show the config card (AskUserQuestion, in the user's language; recommended option first " +
+              "in every question, so plain Enter = all defaults). Ask exactly these questions, no additions/removals/reordering:",
+            q1_gate: "Look at the repo WITH the goal in mind and offer 2-4 candidate commands " +
+              "(only commands that really exist; goal-relevant ones first). If no command can measure it, " +
+              "use metric.source:\"say\" (role-reported, e.g. \"new bugs found\"); only if truly unquantifiable, use a rubric.",
+            q2_models: "Recommended assignment (Recommended; spell out proposer X / critic Y / reviewer Z) " +
+              "/ all-strongest / all-cheapest / pick per role (then show one more card)",
+            q3_rounds: "8 (Recommended) / unlimited (rounds:0) / 3 (quick) - Other for custom",
+            q4_time: "3600s (Recommended) / 7200s" +
+              (wantStreak ? ". The goal mentions consecutive rounds - you MUST also ask a streak question " +
+                "(recommended = the N in the goal)" : ""),
+            q5_token_budget: "Unlimited (Recommended) / 500k / 200k - Other for custom. " +
+              "Counts only what is measurable (Claude Code subagent archives; the coordinator itself cannot be attributed).",
+            then: "Call loop_begin again with { token, goal, budget, roles } " +
+              "(at least two roles; kind is propose/attack/audit).",
             token: st.token
           };
         }
@@ -496,48 +524,59 @@ function createHandler(state) {
           ].filter(Boolean);
           if (missing.length) {
             return reply(id, Object.assign(configInstruction(state.setup),
-              { 缺: missing, 注意: "配置卡答完才许交;缺的字段说明有题没问。" }), true);
+              { missing: missing,
+                note: "Submit only after every config question was asked; a missing field means a question was skipped." }),
+              true);
           }
-          // 服务端拼小结 —— 确认卡上摆什么由这里定,模型原样展示
+          /* 服务端拼小结 —— 确认卡上摆什么由这里定,模型原样展示。
+           * ★ 小结是**给用户看的**,按 setup.lang 出词;指令本身照旧全英文。 */
+          const zh = (state.setup.lang || "zh") === "zh";
           const mtx = g.metric && g.metric.name
-            ? "，指标 " + g.metric.name +
+            ? (zh ? "，指标 " : ", metric ") + g.metric.name +
               (g.metric.min != null ? " ≥ " + g.metric.min : "") +
               (g.metric.max != null ? " ≤ " + g.metric.max : "")
             : "";
-          const gateTxt = g.command ? "命令 " + g.command + mtx
+          const gateTxt = g.command ? (zh ? "命令 " : "command ") + g.command + mtx
             : g.metric && g.metric.source === "say"
-              ? "角色上报 " + (g.metric.name || "指标") +
+              ? (zh ? "角色上报 " : "role-reported ") + (g.metric.name || (zh ? "指标" : "metric")) +
                 (g.metric.max != null ? " ≤ " + g.metric.max : "") +
                 (g.metric.min != null ? " ≥ " + g.metric.min : "")
-            : "评审 rubric";
-          const summary = [
+            : (zh ? "评审 rubric" : "judge rubric");
+          const summary = zh ? [
             "目标  " + state.setup.task,
             "判据  " + gateTxt + (g.streak > 1 ? "（连续 " + g.streak + " 轮判过才算达标）" : ""),
             "角色  " + roles.map((r) => r.name + (r.model ? "(" + r.model + ")" : "")).join(" · "),
             "预算  " + (b.rounds === 0 ? "不限轮" : b.rounds + " 轮") + " / " + b.seconds + "s" +
               (b.noProgressRounds != null ? " / 零进展 " + b.noProgressRounds + " 轮停" : "")
+          ].join("\n") : [
+            "Goal    " + state.setup.task,
+            "Gate    " + gateTxt + (g.streak > 1 ? " (" + g.streak + " consecutive passing rounds required)" : ""),
+            "Roles   " + roles.map((r) => r.name + (r.model ? "(" + r.model + ")" : "")).join(" · "),
+            "Budget  " + (b.rounds === 0 ? "unlimited rounds" : b.rounds + " rounds") + " / " + b.seconds + "s" +
+              (b.noProgressRounds != null ? " / stop after " + b.noProgressRounds + " no-progress rounds" : "")
           ].join("\n");
-          state.setup = { stage: "confirm", token: tok(), task: state.setup.task,
-            cfg: Object.assign({}, args, { task: state.setup.task, session: args.session || state.setup.task.slice(0, 60) }) };
+          state.setup = { stage: "confirm", token: tok(), task: state.setup.task, lang: state.setup.lang,
+            cfg: Object.assign({}, args, { task: state.setup.task, lang: state.setup.lang,
+              session: args.session || state.setup.task.slice(0, 60) }) };
           return reply(id, {
-            步骤: "3/3 确认",
-            指令: "把下面的小结**原样**摆给用户,然后 AskUserQuestion 问一次:「就这么开跑？」" +
-              "选项: 开跑 (Recommended) / 再改一项 / 取消。",
-            小结: summary,
-            用户选开跑: "带 { token, go: true } 重调 loop_begin。",
-            用户选再改: "带 { token, revise: true } 重调,会回到配置卡。",
+            step: "3/3 confirm",
+            instruction: "Show the summary below to the user **verbatim**, then ask once via AskUserQuestion " +
+              "(in the user's language): start as configured? Options: Start (Recommended) / Change one thing / Cancel.",
+            summary: summary,
+            on_start: "Call loop_begin again with { token, go: true }.",
+            on_change: "Call loop_begin again with { token, revise: true } to return to the config card.",
             token: state.setup.token
           }, true);
         }
 
         if (state.setup.stage === "confirm") {
           if (args.revise) {
-            state.setup = { stage: "config", token: tok(), task: state.setup.task };
+            state.setup = { stage: "config", token: tok(), task: state.setup.task, lang: state.setup.lang };
             return reply(id, configInstruction(state.setup), true);
           }
           if (!args.go) {
-            return reply(id, { error: "确认步只认 { go: true }(用户选了开跑)或 { revise: true }(再改一项)。" +
-              "用户选「取消」就别再调了。" }, true);
+            return reply(id, { error: "The confirm step accepts only { go: true } (user chose Start) " +
+              "or { revise: true } (change one thing). If the user chose Cancel, stop calling." }, true);
           }
           /* ★ 把**你干活的那个目录**带过去。子 agent 的档案是按目录分的
            *   (~/.claude/projects/<cwd 转成的名字>/),而监控台可能是从别处起的 ——
@@ -546,22 +585,26 @@ function createHandler(state) {
           state.setup = null;   // 用掉即弃 —— 开局失败也从头走,别留半截状态
           const up = await ensureConsole();
           if (!up) {
-            return reply(id, "起不了监控台。手动诊断：`node " + path.join(__dirname, "server.js") +
-              " web --no-open`（裸跑只打指引,要带 web）;或用 --url 指向已经在跑的那个。", true);
+            return reply(id, "Could not start the console. Diagnose manually: `node " +
+              path.join(__dirname, "server.js") +
+              " web --no-open` (bare run only prints guidance; the `web` subcommand is required); " +
+              "or use --url to point at one already running.", true);
           }
           const r = await post("/host/begin", cfg);
           if (!r.ok) return reply(id, r.body, true);
           await ensureViewer();
           return reply(id, Object.assign({ console: state.base }, r.body,
-            { 协议: "每个角色发言后调 loop_say;一轮结束调 loop_gate;continue:false 就停手。" }));
+            { protocol: "Call loop_say after each role speaks; call loop_gate at the end of each round; " +
+              "when it returns continue:false, stop." }));
         }
 
         // stage === "task":收目标
         if (!taskOk(args.task)) {
-          return reply(id, { error: "目标还没立住(太短/太含糊)。问清楚再来 —— 判据候选是按目标挑的。",
-            token: state.setup.token }, true);
+          return reply(id, { error: "The goal is not established yet (too short/vague). Ask the user to clarify - " +
+            "gate candidates are chosen from the goal.", token: state.setup.token }, true);
         }
-        state.setup = { stage: "config", token: tok(), task: String(args.task).trim() };
+        state.setup = { stage: "config", token: tok(), task: String(args.task).trim(),
+          lang: args.lang || langOf(args.task) };
         return reply(id, configInstruction(state.setup), true);
       }
       if (name === "loop_say") {
