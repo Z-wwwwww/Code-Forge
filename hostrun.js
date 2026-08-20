@@ -101,7 +101,17 @@ function create(append) {
       if (warned > 6) return;   // 同一段静默别刷屏;下一条发言会重置
       const sec = Math.round((Date.now() - baseline) / 1000);
       const tq = i18n.T(st.lang);
-      append({ t: "run.streaming", role: "gate",
+      /* ★ actor:大概在干活的角色。实测:直播上的脉搏行以「第 N 轮 ·」开头,
+       *   显示层只能靠「3 分钟内说过话」猜角色 —— 子 agent 一跑十几分钟,窗口一过
+       *   角色名被摘掉,脉搏看起来挂在轮次上。谁在动**服务端知道**(上一条是反驳者
+       *   → 在等实现者修;否则就是上一个发言者代表的那摊活),事件自己带上。 */
+      let actor = null;
+      if (st.lastSay) {
+        actor = st.lastSay.kind === "attack"
+          ? (st.cfg.roles.filter(function (r) { return r.kind === "propose"; })[0] || {}).id || null
+          : st.lastSay.id;
+      }
+      append({ t: "run.streaming", role: "gate", actor: actor,
         text: (st.turns === 0
           ? tq.quietStart(sec)
           : tq.quietRound(st.round, sec, st.lastSay)) +
@@ -207,7 +217,8 @@ function create(append) {
     st.turns++;
     st.lastSayAt = Date.now();   // 看门狗的静默计时以它为基准
     // 看门狗要能说出「在等谁」:记下最后一个发言者和他说了什么
-    st.lastSay = { name: known.name, kind: known.kind, summary: String(ev.summary || "").slice(0, 40) };
+    st.lastSay = { id: known.id, name: known.name, kind: known.kind,
+      summary: String(ev.summary || "").slice(0, 40) };
     // 角色上报指标:只收**反驳者/复核者**带的 value —— 实现者有动机报 0(它想收工)。
     // 同一轮报多次以最后一次为准(反驳者可能先报初步数、再报核完的数)。
     if (typeof ev.value === "number" && isFinite(ev.value) &&
@@ -441,9 +452,9 @@ function create(append) {
     }
     // 异常要写进裁决细节,否则「为什么停」只剩一个词
     const anomaly = stop === "idle_spin"
-      ? "连续 " + st.idleRounds + " 轮没有任何角色改过文件（权限够吗？提示词是不是让它只做分析？）"
+      ? i18n.T(st.lang).idleSpin(st.idleRounds)
       : stop === "stalled"
-        ? "角色进程卡住被中止：" + st.stalls.join("、")
+        ? i18n.T(st.lang).stalledDetail(st.stalls.join(", "))
         : null;
 
     // 裁决那一行要说清是**谁**判的 —— 评审判过和命令判过不该看起来一样

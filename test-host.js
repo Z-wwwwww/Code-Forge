@@ -1252,6 +1252,20 @@ async function testPackaging() {
       "★ 心跳要说出上一条是谁说的 —— 「距上一条 Ns」不带主语等于没说");
     assert.ok(/在等实现者修/.test(hb.text),
       "★ 反驳者刚报完 → 心跳要点明「多半在等实现者修」,用户才知道静默是修不是卡");
+    /* ★ 心跳要带 actor(大概在干活的角色 id)。实测:显示层只能靠「3 分钟内说过话」
+     *   猜角色,长派发一过窗口角色名被摘掉,脉搏看起来挂在「第 N 轮」上(用户点名:
+     *   「脉搏不是应该显示在正在动作的角色前面吗」)。上一条是反驳 → actor=实现者。 */
+    assert.ok(hb.actor, "心跳要带 actor");
+    {
+      const tuiHB = require("./tui.js");
+      const stHB = tuiHB.newState();
+      evsO.filter(function (e) { return e.t !== "run.end"; }).forEach(function (e) { tuiHB.reduce(stHB, e); });
+      const actLine = tuiHB.renderLines(stHB, 100, { spinFrame: "⠸", openEv: new Set() })
+        .map(function (l) { return (l.text || "").replace(/\[[0-9;]*m/g, ""); })
+        .filter(function (t) { return t.indexOf("⠸") >= 0; })[0] || "";
+      assert.ok(/实现者 │/.test(actLine),
+        "★ 脉搏行要钉在正在动的角色上(⠸ 实现者 │ …),不靠 3 分钟活跃窗口猜。实际:" + actLine);
+    }
     const v = await hO.gate();
     assert.ok(/\(1\) the proposer fixes/.test(v.instruction) && /\(2\) the critic re-digs/.test(v.instruction),
       "★ 挖-修类未达标的 gate 指令要写死轮内顺序:先修再复挖 —— 反了会把没修的又数一遍");

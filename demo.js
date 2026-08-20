@@ -207,7 +207,7 @@ function events() {
       ctx: u.ctx, msgs: u.msgs, tools: u.tools, source: "claude 子 agent 档案" });
   });
   // 静默看门狗的心跳(hostrun 同款):进行中的轮里「谁在干活」要看得见
-  out.push({ t: "run.streaming", role: "gate",
+  out.push({ t: "run.streaming", role: "gate", actor: "r2",
     text: "第 3 轮 · 距上一条发言已 96s（上一条:实现者「Claim 枚举…」，反驳者多半在复检）" });
   return out;
 }

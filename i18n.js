@@ -56,6 +56,9 @@ const TABLES = {
     },
     saidDetail: function (name, v, role, range) { return name + " = " + v + "（" + role + " 报的,要求 " + range + "）"; },
     saidNoneShort: function (name) { return "本轮没人报 " + name + "(say)"; },
+    // hostrun:流程异常(写进裁决细节与 run.end)
+    idleSpin: function (n) { return "连续 " + n + " 轮没有任何角色改过文件（权限够吗？提示词是不是让它只做分析？）"; },
+    stalledDetail: function (who) { return "角色进程卡住被中止：" + who; },
     // hostrun:round.end
     roundMetFinal: function (label) { return label + " · 达标"; },
     roundMetStreak: function (label, cur, need) { return label + " · 本轮过（连胜 " + cur + "/" + need + "）"; },
@@ -144,6 +147,8 @@ const TABLES = {
       return name + " = " + v + " (reported by " + role + ", requires " + range + ")";
     },
     saidNoneShort: function (name) { return "no one reported " + name + " (say)"; },
+    idleSpin: function (n) { return n + " consecutive rounds with no role changing any file (enough permissions? does the prompt ask for analysis only?)"; },
+    stalledDetail: function (who) { return "role process stalled and was aborted: " + who; },
     roundMetFinal: function (label) { return label + " · met"; },
     roundMetStreak: function (label, cur, need) { return label + " · round passed (streak " + cur + "/" + need + ")"; },
     roundNotMet: "not met",

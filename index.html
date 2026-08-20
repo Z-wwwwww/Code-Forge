@@ -339,6 +339,15 @@ var L10N = {
     all: "全部", targets: "针对", waitNext: "等待下一个事件…", thisRound: "本轮",
     verdict: "裁决", pending: "待裁决", collapseAll: "收起全部", expandAll: "展开全部",
     archive: "■ 档案", lastEvent: " 最后事件 ", firstEvent: " 等第一条事件",
+    pulseTip: "这个标志每秒自己转,不靠事件 —— 它停了才是页面真卡了",
+    kpiTip: function(i,o){ return "左栏各角色头号数相加（口径同角色卡;其中 in " + i + " / out " + o + "），数字是 agent 自己报的"; },
+    kpiGapTip: function(g){ return "。CLI 收尾另报了 " + g + " 输出摊不到具体角色（thinking 不带归属信息），所以各角色的 out 是下界"; },
+    kpiNoneTip: "还没有任何角色报出用量：角色可能还没真的干活，或这个宿主没有可读的子 agent 档案",
+    emptyTitle: "还没有事件",
+    emptyBody: "这个页面不存任何状态,它只是把 /events 这条 append-only 流 reduce 出来。喂第一条进去就会立刻出现在这里。",
+    emptyStart: "开跑在 coding agent 里：", emptyWhere: "（Claude Code / Codex；这页只负责看）",
+    emptyConn: "事件流状态:", emptyConnOk: "已连接,等待第一条", emptyConnBad: "未连接,正在重试",
+    noRoundYet: function(n){ return "已经收到 " + n + " 条事件,但还没有 round.start —— 等第一轮开局。"; },
     justNow: "刚刚", secAgo: function(n){ return n + "s 前"; }, minAgo: function(n){ return n + "m 前"; }
   },
   en: {
@@ -373,6 +382,15 @@ var L10N = {
     all: "all", targets: "targets", waitNext: "waiting for the next event…", thisRound: "this round",
     verdict: "verdict", pending: "pending", collapseAll: "collapse all", expandAll: "expand all",
     archive: "■ archive", lastEvent: " last event ", firstEvent: " waiting for the first event",
+    pulseTip: "this marker spins on its own every second, not on events - if it stops, the page is truly stuck",
+    kpiTip: function(i,o){ return "sum of each role's headline number (same basis as the role cards; of which in " + i + " / out " + o + "), self-reported by the agents"; },
+    kpiGapTip: function(g){ return ". The CLI also reported " + g + " output tokens unattributable to any role (thinking carries no attribution), so per-role out is a lower bound"; },
+    kpiNoneTip: "no role has reported usage yet: they may not have started working, or this host has no readable subagent archives",
+    emptyTitle: "no events yet",
+    emptyBody: "this page stores no state - it just reduces the append-only /events stream. Feed it one event and it appears here immediately.",
+    emptyStart: "start runs from a coding agent: ", emptyWhere: "(Claude Code / Codex; this page only watches)",
+    emptyConn: "event stream: ", emptyConnOk: "connected, waiting for the first event", emptyConnBad: "disconnected, retrying",
+    noRoundYet: function(n){ return n + " events received but no round.start yet - waiting for round 1."; },
     justNow: "just now", secAgo: function(n){ return n + "s ago"; }, minAgo: function(n){ return n + "m ago"; }
   }
 };
@@ -622,7 +640,7 @@ function renderHeader(round, isLive){
   var tabs = [{ key:"live", label:WT().tabLive }, { key:"replay", label:WT().tabReplay }].map(function(tb){
     return '<button data-act="mode" data-v="' + tb.key + '"' + (state.mode === tb.key ? ' class="on"' : "") + ">" + esc(tb.label) + "</button>";
   }).join("");
-  var pulsePill = '<span class="conn" id="pulse" title="这个标志每秒自己转,不靠事件 —— 它停了才是页面真卡了"></span>';
+  var pulsePill = '<span class="conn" id="pulse" title="' + WT().pulseTip + '"></span>';
   var connPill = conn.state === "open"
     ? '<span class="conn ok" title="SSE connected">' + WT().stream + STORE.count + "</span>"
     : '<span class="conn bad" title="SSE disconnected, retrying">' + WT().stream + (conn.state === "connecting" ? WT().connecting : WT().retrying) + "</span>";
@@ -651,10 +669,8 @@ function renderHeader(round, isLive){
       '<div class="tabs">' + tabs + "</div>" +
       '<div class="kpis">' +
         '<div class="kpi" title="' + esc(totShown
-            ? "左栏各角色头号数相加（口径同角色卡;其中 in " + k1(t.in) + " / out " + k1(t.out) + "），数字是 agent 自己报的" +
-              (gap ? "。CLI 收尾另报了 " + k1(gap) + " 输出摊不到具体角色（thinking 不带归属信息），" +
-                     "所以各角色的 out 是下界" : "")
-             : "还没有任何角色报出用量：角色可能还没真的干活，或这个宿主没有可读的子 agent 档案") + '">' +
+            ? WT().kpiTip(k1(t.in), k1(t.out)) + (gap ? WT().kpiGapTip(k1(gap)) : "")
+             : WT().kpiNoneTip) + '">' +
           '<span class="v">' + (totShown ? k1(totShown) : "—") + '</span>' +
           '<span class="k">' + (totShown ? WT().tokTotal : WT().tokNone) + "</span></div>" +
         // 成本只显示 agent 自己报的那个数。查价目表乘一遍算出来的是编的,不写。
@@ -856,7 +872,10 @@ function renderMain(round, isLive){
   var vb = round.live ? "#232830" : wc + "40";
   var vbg = round.live ? "#14181D" : wc + "12";
   var say = STORE.streaming && STORE.streaming.text ? STORE.streaming.text : WT().waitNext;
-  var who = STORE.streaming && STORE.streaming.role ? roleOf(STORE.streaming.role).name : WT().thisRound;
+  // 优先 actor(心跳自带的「大概在干活的角色」);role=gate 的心跳没有 actor 时不冒充「判据在动」
+  var sRole = STORE.streaming && (STORE.streaming.actor ||
+    (STORE.streaming.role !== "gate" ? STORE.streaming.role : null));
+  var who = sRole ? roleOf(sRole).name : WT().thisRound;
   var stream = isLive ? (
     '<div class="stream">' + "<div></div>" +
       '<div class="rail"><span class="live-dot"></span></div>' +
@@ -952,16 +971,15 @@ function renderEmpty(){
   return renderHeader(null, false) +
     '<div class="empty">' +
       '<div class="empty-card">' +
-        "<h1>还没有事件</h1>" +
-        "<p>这个页面不存任何状态,它只是把 <code>/events</code> 这条 append-only 流 reduce 出来。" +
-        "喂第一条进去就会立刻出现在这里。</p>" +
-        '<p>开跑在 coding agent 里：<code>/code-forge &lt;目标&gt;</code>' +
-        ' <span class="dim" style="margin-left:8px">（Claude Code / Codex；这页只负责看）</span></p>' +
+        "<h1>" + WT().emptyTitle + "</h1>" +
+        "<p>" + WT().emptyBody + "</p>" +
+        '<p>' + WT().emptyStart + '<code>/code-forge &lt;goal&gt;</code>' +
+        ' <span class="dim" style="margin-left:8px">' + WT().emptyWhere + "</span></p>" +
         "<pre>code-forge --demo --live   # 或先看一遍示例回环\n\n" +
         "curl -X POST localhost:" + esc(port) + "/events \\\n" +
         "  -H 'content-type: application/json' \\\n" +
         '  -d \'{"t":"run.start","session":"我的回环"}\'</pre>' +
-        '<p class="dim">事件流状态:' + (conn.state === "open" ? "已连接,等待第一条" : "未连接,正在重试") + "</p>" +
+        '<p class="dim">' + WT().emptyConn + (conn.state === "open" ? WT().emptyConnOk : WT().emptyConnBad) + "</p>" +
       "</div>" +
     "</div>";
 }
@@ -981,8 +999,8 @@ function render(){
   // innerHTML 赋值之前,页面就卡死在上一次渲染的画面(通常是「还没有事件」)不会再动。
   if (!round) {
     app.innerHTML = renderHeader(null, false) +
-      '<div class="empty"><div class="empty-card"><h1>还没有轮次</h1>' +
-      '<p>已经收到 ' + STORE.count + ' 条事件,但还没有 round.start —— 等第一轮开局。</p></div></div>';
+      '<div class="empty"><div class="empty-card"><h1>' + WT().noRounds + "</h1>" +
+      "<p>" + WT().noRoundYet(STORE.count) + "</p></div></div>";
     return;
   }
   var isLive = state.mode === "live" && !!(round && round.live);

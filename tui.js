@@ -725,10 +725,14 @@ function renderLines(st, width, view) {
       if (r.live && !st.ended && st.streaming && st.streaming.text) {
         const frame = (view && view.spinFrame) || GL.run;
         // 左侧必须有角色名 —— 「谁在动」不能让人从活动文本里猜。
-        // streaming 自带角色(dispatch 的活动)就用它;心跳类(role=gate)用当前活跃角色顶上
-        const rid = st.streaming.role && st.streaming.role !== "gate" && st.roles[st.streaming.role]
-          ? st.streaming.role
-          : (view && view.activeRole && st.roles[view.activeRole]) ? view.activeRole : null;
+        // 优先级:事件自带 actor(心跳,服务端推的) > 事件自带角色(dispatch 的活动)
+        //        > 最近活跃角色。实测:只靠「3 分钟内说过话」猜,长派发一过窗口
+        //        角色名就被摘掉,脉搏看起来挂在「第 N 轮」上(用户点名)。
+        const rid = st.streaming.actor && st.roles[st.streaming.actor]
+          ? st.streaming.actor
+          : st.streaming.role && st.streaming.role !== "gate" && st.roles[st.streaming.role]
+            ? st.streaming.role
+            : (view && view.activeRole && st.roles[view.activeRole]) ? view.activeRole : null;
         let ltxt = String(st.streaming.text);
         let lhead = "";
         if (rid) {
@@ -763,7 +767,13 @@ function renderLines(st, width, view) {
     }
   } else if (st.streaming) {
     L.push("");
-    L.push(C.teal(GL.run + " ") + C.dim(clip(st.streaming.text || T.inProgressDots, W - 6)));
+    const bRid = st.streaming.actor && st.roles[st.streaming.actor] ? st.streaming.actor
+      : st.streaming.role && st.streaming.role !== "gate" && st.roles[st.streaming.role]
+        ? st.streaming.role : null;
+    L.push(C.teal(GL.run + " ") +
+      (bRid ? C.bold(st.roles[bRid].name) + C.dim(" │ ") : "") +
+      C.dim(clip(st.streaming.text || T.inProgressDots, W - 8 -
+        (bRid ? dispWidth(st.roles[bRid].name) : 0))));
   }
   if (st.unknown) L.push(C.yellow(T.unknownEvents(st.unknown)));
   return LL;
@@ -1112,6 +1122,9 @@ function watch(base, opts) {
         lastEventAt = Date.now();
         if ((ev.t === "run.streaming" || ev.t === "event") && ev.role && ev.role !== "gate") {
           activeRole = ev.role; activeAt = Date.now();
+        } else if (ev.t === "run.streaming" && ev.actor) {
+          // 心跳带的 actor:长派发期间角色表的脉搏不再因 3 分钟窗口过期而消失
+          activeRole = ev.actor; activeAt = Date.now();
         }
         if (ev.t === "run.end") activeRole = null;
         dirty = true;
