@@ -289,8 +289,11 @@ const TOOLS = [
 async function bringUpConsole(d) {
   let child = d.spawnConsole();
   let base = d.base;
-  for (let i = 0; i < (d.tries || 40); i++) {
-    await d.sleep(100);
+  for (let i = 0; i < (d.tries || 46); i++) {
+    // 头几拍问得密一点。server.js 实测 ~200ms 就绪,而固定 100ms 一拍的话
+    // 「第一拍先睡 100ms」平均要多等半拍 —— 25ms×8 + 100ms×38 总预算还是 4 秒,
+    // 但常见情况(一起就好)少等 ~100ms。开局那一下是有人在盯着的。
+    await d.sleep(i < 8 ? 25 : 100);
     const rd = d.rediscover();
     if (rd && rd !== base) base = rd;
     if (await d.alive(base)) return { up: true, base: base, child: child };
@@ -347,7 +350,7 @@ function createHandler(state) {
       if (await alive()) { log("监控台在 " + state.base); return true; }
     }
     const r = await bringUpConsole({
-      base: state.base, sleep: sleep, tries: 40,        // 最多等 4 秒
+      base: state.base, sleep: sleep, tries: 46,        // 25ms×8 + 100ms×38 = 最多等 4 秒
       alive: alive,
       rediscover: function () { return discoverBase(null); },
       spawnConsole: function () {

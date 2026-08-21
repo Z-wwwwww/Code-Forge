@@ -31,6 +31,48 @@ function safeModel(m) {
 const cache = new Map();   // 可执行名 → 真实路径 | null（探测一次就够，别每次都 spawn 一个 where）
 
 /**
+ * 自己扫一遍 PATH —— 这就是 where/which 干的活,只是不用起一个进程。
+ *
+ * 为什么值得自己写:spawnSync 一个 where 要 ~90ms(Windows 实测),doctor 要探 5 个
+ * 宿主 = 半秒纯等待,其中 4 个「没装」的也照收这笔钱。纯 fs 版本 ~0ms。
+ * 语义照抄 where,不多不少:
+ *   · 目录顺序 = PATH 顺序;Windows 上还先看当前目录(where 就是这么找的)
+ *   · 每个目录内按 PATHEXT 顺序试后缀 —— 同一目录同时有 claude.exe / claude.cmd 时
+ *     挑 PATHEXT 里靠前的那个(与旧代码「按 where 的输出顺序挑」同解)
+ *   · POSIX 上要真有 x 位,否则会把同名的普通文件当成命令
+ */
+function scanPath(name) {
+  const win = process.platform === "win32";
+  // PATH 里的目录可能带引号("C:\Program Files\x") —— where 会剥掉,我们也剥
+  const dirs = String(process.env.PATH || "").split(path.delimiter)
+    .map(function (d) { return d.trim().replace(/^"|"$/g, ""); }).filter(Boolean);
+  if (win) dirs.unshift(process.cwd());
+  const exts = win
+    // 后缀小写:PATHEXT 里是 ".EXE" 这种大写,拼出来的 claude.EXE 在 Windows 上照样打得开
+    // (文件系统不分大小写),但打进 doctor 的表里很难看
+    ? [""].concat(String(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD")
+        .toLowerCase().split(";").filter(Boolean))
+    : [""];
+  // 名字自带后缀(claude.cmd)时才允许原样试 —— 否则会拼出 claude.cmd.exe 这种东西
+  const hasExt = /\.[^.\\/]+$/.test(name);
+  const hit = function (f) {
+    try {
+      if (!fs.statSync(f).isFile()) return false;
+      if (!win) fs.accessSync(f, fs.constants.X_OK);
+      return true;
+    } catch (_) { return false; }
+  };
+  for (let i = 0; i < dirs.length; i++) {
+    for (let k = 0; k < exts.length; k++) {
+      if (exts[k] === "" && win && !hasExt) continue;   // Windows 上裸名不是可执行文件
+      const f = path.join(dirs[i], name + exts[k]);
+      if (hit(f)) return f;
+    }
+  }
+  return null;
+}
+
+/**
  * 把一个可执行名解析成真实路径。找不到回 null。
  * 独立出来是因为 doctor / 适配器选择都要「装了吗」这个答案,而它们不该顺带起进程。
  */
@@ -41,13 +83,17 @@ function which(name) {
   if (path.isAbsolute(name) && fs.existsSync(name)) {
     bin = name;
   } else {
-    // where/which 拿真实路径。Windows 上这些 CLI 多是 .cmd,不走 shell 就必须用全名。
-    const finder = process.platform === "win32" ? "where" : "which";
-    const r = spawnSync(finder, [name], { encoding: "utf8" });
-    if (r.status === 0 && r.stdout) {
-      const lines = r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-      // Windows 的 where 可能同时列出 claude 与 claude.cmd —— 挑能直接 spawn 的那个
-      bin = lines.filter((l) => /\.(cmd|bat|exe)$/i.test(l))[0] || lines[0] || null;
+    bin = scanPath(name);
+    // 扫不到才退回 where/which。留这条退路是因为「明明装了却说没装」的代价远大于
+    // 这 ~90ms —— 万一有种少见的安装方式是上面的扫描模型不到的,至少还有一层兜底。
+    if (!bin) {
+      const finder = process.platform === "win32" ? "where" : "which";
+      const r = spawnSync(finder, [name], { encoding: "utf8" });
+      if (r.status === 0 && r.stdout) {
+        const found = r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        // Windows 的 where 可能同时列出 claude 与 claude.cmd —— 挑能直接 spawn 的那个
+        bin = found.filter((l) => /\.(cmd|bat|exe)$/i.test(l))[0] || found[0] || null;
+      }
     }
   }
   cache.set(name, bin);

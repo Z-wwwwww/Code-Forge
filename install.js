@@ -150,11 +150,9 @@ function runNpm(args, cwd) {
 }
 
 function binCommandWorks() {
-  try {
-    const out = execFileSync(process.platform === "win32" ? "where" : "which",
-      ["code-forge"], { encoding: "utf8" });
-    return !!String(out).trim();
-  } catch (_) { return false; }
+  // 同 haveClaudeCli:自己扫 PATH,不 spawn 一个 where(~90ms)。
+  // ⚠ 必须在 npm link/i -g **之后**才调 —— which 有进程内缓存,提前问会把「还没装上」缓存住。
+  return !!require("./agentcli.js").which("code-forge");
 }
 
 function installBin() {
@@ -260,8 +258,30 @@ function mcpArgs() {
 }
 
 function haveClaudeCli() {
-  try { execFileSync("claude", ["--version"], { stdio: "ignore" }); return true; }
-  catch (_) { return false; }
+  // 别为了「装了吗」起一个 claude 进程:`claude --version` 实测 353ms,而 which 是 ~0ms
+  // (agentcli.which 自己扫 PATH/PATHEXT,不 spawn where)。
+  return !!require("./agentcli.js").which("claude");
+}
+
+/**
+ * ~/.claude.json 里已经注册的那条(--scope user 写的就是顶层 mcpServers)。没有回 null。
+ * 只读不写 —— 写还是交给 claude CLI,它知道自己的格式。
+ */
+function claudeMcpEntry() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"));
+    const e = j && j.mcpServers && j.mcpServers[MCP_NAME];
+    return e && typeof e === "object" ? e : null;
+  } catch (_) { return null; }
+}
+
+/** 已注册的那条跟这次要写的**完全一样**吗(命令 + 参数)。一样就没必要重写一遍。 */
+function claudeMcpUpToDate(want) {
+  const e = claudeMcpEntry();
+  if (!e) return false;
+  const args = Array.isArray(e.args) ? e.args : [];
+  return e.command === want[0] && args.length === want.length - 1 &&
+    args.every(function (v, i) { return v === want[i + 1]; });
 }
 
 function tryClaudeCli() {
@@ -273,11 +293,22 @@ function tryClaudeCli() {
   if (DRY) {
     const have = haveClaudeCli();
     say("  [dry] " + (have
-      ? "claude mcp " + (UNINSTALL ? "remove" : "add") + " --scope user " + MCP_NAME
+      ? (!UNINSTALL && claudeMcpUpToDate(a)
+          ? "已经注册成一样的了,跳过 claude mcp add（读 ~/.claude.json 对出来的）"
+          : "claude mcp " + (UNINSTALL ? "remove" : "add") + " --scope user " + MCP_NAME)
       : "没有 claude CLI → 会改 ~/.claude.json 的 mcpServers." + MCP_NAME));
     return have;
   }
   if (!haveClaudeCli()) return false;
+  /* ★ 已经是同一条就直接算数,一个 claude 进程都不起。
+   *   `claude mcp remove` + `mcp add` 实测各 ~1.3s,而 install 最常见的用法恰恰是
+   *   「再跑一遍来更新」—— 那一次两条命令写回去的东西跟原来一字不差。 */
+  if (!UNINSTALL && claudeMcpUpToDate(a)) {
+    skipped.push("Claude Code 的 MCP（已经注册成一样的了）");
+    return true;
+  }
+  // 反过来:本来就没注册,uninstall 也不必起进程去删一个不存在的东西
+  if (UNINSTALL && !claudeMcpEntry()) return true;
   try {
     execFileSync("claude", ["mcp", "remove", "--scope", "user", MCP_NAME], { stdio: "ignore" });
   } catch (_) { /* 本来没有,正常 */ }
@@ -311,8 +342,12 @@ function registerOtherHosts() {
     if (a.mcp.kind === "cli") {
       const args = UNINSTALL ? a.mcp.remove(MCP_NAME) : a.mcp.add(MCP_NAME, cmd);
       if (DRY) { say("  [dry] " + a.bin + " " + args.join(" ")); return; }
-      // 先无条件 remove 一次再 add —— 否则重复装会撞「已存在」而整条失败(幂等)
-      if (!UNINSTALL) cli.exec(a.bin, a.mcp.remove(MCP_NAME));
+      /* 先 remove 一次再 add —— 否则重复装会撞「已存在」而整条失败(幂等)。
+       * 但「本来就没注册」时这一次 remove 纯属白起一个进程(codex 实测 ~390ms):
+       * 适配器能从配置文件里直接看出来没注册(registered()===false)时就跳过它。
+       * 拿不准(null)照旧无条件 remove —— 幂等比省下的那 400ms 重要。 */
+      const known = typeof a.mcp.registered === "function" ? a.mcp.registered(MCP_NAME) : null;
+      if (!UNINSTALL && known !== false) cli.exec(a.bin, a.mcp.remove(MCP_NAME));
       const r = cli.exec(a.bin, args);
       if (r.error || r.status !== 0) {
         failed.push(a.label + " 的 MCP 没注册上（" + (r.error || ("退出码 " + r.status) ) +

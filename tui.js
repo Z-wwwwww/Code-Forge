@@ -18,6 +18,9 @@ const path = require("path");
 const readline = require("readline");
 const { spawn } = require("child_process");
 
+// MCP server 在各家宿主配置里的名字（与 install.js 的 MCP_NAME 同一个字符串）
+const MCP_NAME = "code-forge";
+
 /* ---------------- 颜色（NO_COLOR / 非 TTY 时自动退化） ---------------- */
 const TTY = process.stdout.isTTY && !process.env.NO_COLOR;
 const C = (function () {
@@ -175,8 +178,10 @@ async function ensureConsole(base) {
   const child = spawn(process.execPath, [path.join(__dirname, "server.js"), "--no-open"],
     { detached: true, stdio: "ignore" });
   child.unref();
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 100));
+  // 头几拍密一点:server.js 实测 ~200ms 就绪,固定 100ms 一拍平均要多等半拍。
+  // 25ms×8 + 100ms×38,总预算仍是 4 秒。
+  for (let i = 0; i < 46; i++) {
+    await new Promise((r) => setTimeout(r, i < 8 ? 25 : 100));
     const b = discoverBase();
     try { const h = await req(b, "/health"); if (h.status === 200) return b; } catch (_) {}
   }
@@ -1385,21 +1390,33 @@ function probeHosts() {
   });
 }
 
-/** MCP 注册了没。查得出就回 true/false,查不了回 null —— null 不是「没注册」。 */
+/**
+ * MCP 注册了没。查得出就回 true/false,查不了回 null —— null 不是「没注册」。
+ *
+ * ★ 顺序是**先读磁盘,再问 CLI**,而不是反过来。理由是实测数字:
+ *   `claude mcp list` 要 6.8~7.9s(它会把已配置的每个 MCP server 都拉起来做健康检查,
+ *   顺带把 code-forge 自己也起一遍),而同一个答案就明文躺在 ~/.claude.json 里,读它 ~1ms。
+ *   `code-forge doctor` 原本 9.5s,8s 是这一句花的;doctor 那段测试连着调好几次 probeHosts,
+ *   更是几十秒。适配器给了 registered() 就用它,只有它说「查不出来」(null)才退回问 CLI。
+ */
 function mcpRegistered(a) {
   const fsx = require("fs");
   const cli = require("./agentcli.js");
   try {
+    if (a.mcp && typeof a.mcp.registered === "function") {
+      const v = a.mcp.registered(MCP_NAME);
+      if (v === true || v === false) return v;   // null = 配置文件读不着,往下走
+    }
     if (a.mcp && a.mcp.kind === "cli") {
       // 经 agentcli.exec —— 它会把 Windows 的 .cmd 包装脚本拆成 node + 入口。
       // 直接 spawn .cmd 是 EINVAL(实测 codex),那会让「查不出来」看起来像「没注册」。
       const r = cli.exec(a.bin, ["mcp", "list"]);
       if (r.error || r.status !== 0 || !r.stdout) return null;
-      return /code-forge/.test(r.stdout);
+      return String(r.stdout).includes(MCP_NAME);
     }
     if (a.mcp && (a.mcp.kind === "json" || a.mcp.kind === "toml")) {
       if (!fsx.existsSync(a.mcp.file)) return false;
-      return /code-forge/.test(fsx.readFileSync(a.mcp.file, "utf8"));
+      return fsx.readFileSync(a.mcp.file, "utf8").includes(MCP_NAME);
     }
   } catch (_) { return null; }
   return null;

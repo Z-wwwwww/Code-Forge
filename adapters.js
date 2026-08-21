@@ -84,7 +84,37 @@ const claude = {
   mcp: {
     kind: "cli",
     add: function (name, cmd) { return ["mcp", "add", "--scope", "user", name, "--"].concat(cmd); },
-    remove: function (name) { return ["mcp", "remove", "--scope", "user", name]; }
+    remove: function (name) { return ["mcp", "remove", "--scope", "user", name]; },
+    /**
+     * 「注册了没」直接读磁盘,**不要**去问 `claude mcp list`。
+     *
+     * 实测:`claude mcp list` 要 6.8~7.9s —— 它会把已配置的每个 MCP server 都**拉起来**
+     * 做一次健康检查(顺带把 code-forge 自己也起一遍)。而 doctor 只想知道一个布尔值。
+     * 光这一句就占了 `code-forge doctor` 9.5s 里的 8s;test-host 的 doctor 那段更惨,
+     * 它要连着调 probeHosts 好几次。
+     *
+     * 三个 scope 全查(用户可能不是用 install 装的):
+     *   user  → ~/.claude.json 顶层 mcpServers   ← install.js 写的是这儿(--scope user)
+     *   local → ~/.claude.json 的 projects[cwd].mcpServers
+     *   project → 工作目录里的 .mcp.json
+     * 读不着/解析不了就回 null(=「查不出来」),调用方会退回问 CLI —— 别把
+     * 「没查到」说成「没注册」。
+     */
+    registered: function (name) {
+      const f = path.join(os.homedir(), ".claude.json");
+      let j = null;
+      try { j = JSON.parse(fs.readFileSync(f, "utf8")); } catch (_) { return null; }
+      if (!j || typeof j !== "object") return null;
+      const inMap = function (m) { return !!(m && typeof m === "object" && m[name]); };
+      if (inMap(j.mcpServers)) return true;
+      const pr = j.projects && typeof j.projects === "object" ? j.projects : {};
+      if (Object.keys(pr).some(function (k) { return inMap(pr[k] && pr[k].mcpServers); })) return true;
+      try {
+        const pj = JSON.parse(fs.readFileSync(path.join(process.cwd(), ".mcp.json"), "utf8"));
+        if (inMap(pj && pj.mcpServers)) return true;
+      } catch (_) { /* 没这个文件是常态 */ }
+      return false;
+    }
   },
   parse: function (m) {
     if (!m || typeof m !== "object") return null;
@@ -265,7 +295,17 @@ const codex = {
   mcp: {
     kind: "cli",
     add: function (name, cmd) { return ["mcp", "add", name, "--"].concat(cmd); },
-    remove: function (name) { return ["mcp", "remove", name]; }
+    remove: function (name) { return ["mcp", "remove", name]; },
+    // 同 claude:读文件,别起 CLI(codex mcp list 也要 ~390ms,而它就写在这个文件里)。
+    // codex 把 server 落成 TOML 的一张表:[mcp_servers.code-forge] —— 带连字符的裸键
+    // 合法,但也允许写成 ["code-forge"],两种都认。读不着回 null(=查不出来)。
+    registered: function (name) {
+      const f = path.join(os.homedir(), ".codex", "config.toml");
+      let raw = "";
+      try { raw = fs.readFileSync(f, "utf8"); } catch (_) { return null; }
+      const esc = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp("^\\s*\\[mcp_servers\\.\"?" + esc + "\"?\\]", "m").test(raw);
+    }
   },
   parse: function (m) {
     if (!m || typeof m !== "object" || !m.type) return null;

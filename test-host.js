@@ -2519,6 +2519,33 @@ async function testAdapters() {
     ok("★ doctor 能认出「在跑的监控台/MCP 是旧代码」——改了代码还见旧行为的第一嫌疑人");
   }
 
+  /* ★ doctor 不许再靠 `<host> mcp list` 回答「注册了没」。
+   *   实测账:`claude mcp list` 要 6.8~7.9s —— 它会把已配置的每个 MCP server 都**拉起来**
+   *   做健康检查(顺带把 code-forge 自己也起一遍)。于是 `code-forge doctor` 要 9.5s、
+   *   上面那几段 doctor 测试(连着调 probeHosts)要几十秒,而答案本来就明文躺在
+   *   ~/.claude.json / ~/.codex/config.toml 里,读一下 ~1ms。
+   *   这条断言钉住两件事:适配器有 registered()(读文件的那条路),以及 probeHosts 整体够快。 */
+  {
+    const ad = require("./adapters.js");
+    ["claude", "codex"].forEach(function (id) {
+      const a = ad.all().filter(function (x) { return x.id === id; })[0];
+      assert.ok(a && a.mcp && typeof a.mcp.registered === "function",
+        "★ " + id + " 的适配器要能从配置文件直接答「MCP 注册了没」（别去起一个 CLI 问）");
+      const v = a.mcp.registered("code-forge");
+      assert.ok(v === true || v === false || v === null,
+        "registered() 只许回 true/false/null（null = 文件读不着 = 查不出来）");
+    });
+    const t0 = Date.now();
+    tui.probeHosts();
+    const ms = Date.now() - t0;
+    assert.ok(ms < 3000, "★ probeHosts 不许再花好几秒（回退到 `mcp list` 就会）—— 实测 " + ms + "ms");
+    // which 也不许每次都 spawn 一个 where(~90ms):先自己扫 PATH/PATHEXT,扫不到才退回
+    const cliSrc2 = fs.readFileSync(path.join(__dirname, "agentcli.js"), "utf8");
+    assert.ok(/function scanPath/.test(cliSrc2) && /bin = scanPath\(name\)/.test(cliSrc2),
+      "★ which 要先自己扫 PATH（spawn 一个 where 是 ~90ms,doctor 要探 5 个宿主）");
+    ok("★ 「MCP 注册了没」读文件不起进程（doctor 9.5s → 0.55s；probeHosts 实测 " + ms + "ms）");
+  }
+
   // （执行路线删了:buildPrompt 不存在了。跨宿主的协议内联问题只剩 loop_agent 的角色头,在 dispatch 组测）
 
   // （执行路线删了:buildPrompt/向导/确认屏/点选挑号那一大片测试随之删除。
